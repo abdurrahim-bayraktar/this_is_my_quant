@@ -71,19 +71,19 @@ Where:
 ### Layer Specifications
 
 ```
-┌─────────────────────────────────────────────────────────────┐
+┌───────────────────────────────────────────────────────────┐
 │ Layer                    │ Shape          │ Parameters    │
 ├──────────────────────────┼────────────────┼───────────────┤
-│ Input                   │ [B, 20, 25]    │ -             │
-│ LSTM Layer 1            │ [B, 20, 128]   │ 79,360        │
-│ LSTM Layer 2            │ [B, 20, 128]   │ 131,584       │
-│ Take last hidden        │ [B, 128]       │ -             │
-│ Shared Dense            │ [B, 64]        │ 8,256         │
-│ Trend Head (32→3)       │ [B, 3]         │ 2,147         │
-│ Confidence Head (32→1)  │ [B, 1]         │ 1,057         │
+│ Input                    │ [B, 20, 25]    │ -             │
+│ LSTM Layer 1             │ [B, 20, 128]   │ 79,360        │
+│ LSTM Layer 2             │ [B, 20, 128]   │ 131,584       │
+│ Take last hidden         │ [B, 128]       │ -             │
+│ Shared Dense             │ [B, 64]        │ 8,256         │
+│ Trend Head (32→3)        │ [B, 3]         │ 2,147         │
+│ Confidence Head (32→1)   │ [B, 1]         │ 1,057         │
 ├──────────────────────────┼────────────────┼───────────────┤
-│ TOTAL                   │                │ ~130,000      │
-└─────────────────────────────────────────────────────────────┘
+│ TOTAL                    │                │ ~130,000      │
+└───────────────────────────────────────────────────────────┘
 
 B = batch size (32)
 20 = sequence length (trading days)
@@ -165,20 +165,20 @@ confidence_head = nn.Sequential(
 
 #### 1. Price Features (5)
 
-| Feature | Description | Normalization |
-|---------|-------------|---------------|
-| `open` | Opening price | Z-score |
-| `high` | Daily high | Z-score |
-| `low` | Daily low | Z-score |
-| `close` | Closing price | Z-score |
+| Feature  | Description    | Normalization |
+|----------|----------------|---------------|
+| `open`   | Opening price  | Z-score       |
+| `high`   | Daily high     | Z-score       |
+| `low`    | Daily low      | Z-score       |
+| `close`  | Closing price  | Z-score       |
 | `volume` | Trading volume | Log + Z-score |
 
 #### 2. Return Features (2)
 
-| Feature | Formula | Purpose |
-|---------|---------|---------|
-| `return` | $(P_t - P_{t-1}) / P_{t-1}$ | Daily percentage return |
-| `log_return` | $\ln(P_t / P_{t-1})$ | Log return (additive) |
+| Feature      | Formula                     | Purpose                 |
+|--------------|-----------------------------|-------------------------|
+| `return`     | $(P_t - P_{t-1}) / P_{t-1}$ | Daily percentage return |
+| `log_return` | $\ln(P_t / P_{t-1})$        | Log return (additive)   |
 
 #### 3. Momentum Indicators (2)
 
@@ -221,10 +221,10 @@ ATR = SMA(TR, 14)
 
 #### 6. Moving Averages (4)
 
-| Feature | Formula |
-|---------|---------|
-| `sma_5` | Simple Moving Average (5 days) |
-| `sma_20` | Simple Moving Average (20 days) |
+| Feature  | Formula                              |
+|----------|--------------------------------------|
+| `sma_5`  | Simple Moving Average (5 days)       |
+| `sma_20` | Simple Moving Average (20 days)      |
 | `ema_12` | Exponential Moving Average (12 days) |
 | `ema_26` | Exponential Moving Average (26 days) |
 
