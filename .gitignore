@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# IDE settings
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Project specific
+# Data
+/data/
+
+# Logs
+/logs/
+*.log
+
+# Trained models and checkpoints
+/models/
+
+# Experiments artifacts (if any are saved directly here not in logs/models)
+# But keep the scripts
+# /experiments/ 
+
+# Operating System
+.DS_Store
+Thumbs.db
