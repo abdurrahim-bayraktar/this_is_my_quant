@@ -1,0 +1,5 @@
+model_size,use_attention,n_params,train_samples,test_accuracy,class_0_acc,class_1_acc,class_2_acc,confusion_matrix,best_val_loss,experiment,n_features
+current,False,249092,1916,0.375,0.19047619047619047,0.8351648351648352,0.023255813953488372,"[[12, 51, 0], [13, 76, 2], [23, 61, 2]]",1.0942614123412255,current_all_features,74
+current,False,218884,1916,0.3333333333333333,0.49206349206349204,0.5384615384615384,0.0,"[[31, 32, 0], [42, 49, 0], [41, 45, 0]]",1.0935666431442963,current_selected_features,15
+reduced,False,29188,1916,0.375,0.2222222222222222,0.8351648351648352,0.0,"[[14, 49, 0], [15, 76, 0], [28, 58, 0]]",1.0946709386474418,reduced_selected_features,15
+current,True,285188,1916,0.3625,0.38095238095238093,0.6593406593406593,0.03488372093023256,"[[24, 39, 0], [30, 60, 1], [32, 51, 3]]",1.105420174957818,attention_selected_features,15

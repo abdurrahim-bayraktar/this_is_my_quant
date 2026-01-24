@@ -93,7 +93,7 @@ class LSTMConfig:
     input_size: int = 0  # Set dynamically based on features
     hidden_size: int = 128
     num_layers: int = 2
-    dropout: float = 0.3
+    dropout: float = 0.1  # Reduced from 0.3 - was over-regularizing on small datasets
     bidirectional: bool = False
     
     # Output heads
@@ -120,7 +120,7 @@ class TrainingConfig:
     
     # Regularization
     gradient_clip: float = 1.0
-    early_stopping_patience: int = 10
+    early_stopping_patience: int = 999  # Effectively disabled - let training run full epochs
     
     # Validation
     val_split: float = 0.15

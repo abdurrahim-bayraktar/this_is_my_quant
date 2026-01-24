@@ -1,0 +1,32 @@
+{
+  "no_decay": {
+    "accuracy": 0.42506412605349947,
+    "high_confidence_accuracy": 0.4777777777777778,
+    "high_confidence_ratio": 0.0659582264565775
+  },
+  "decay_0.5": {
+    "accuracy": 0.42506412605349947,
+    "high_confidence_accuracy": 0.4952681388012618,
+    "high_confidence_ratio": 0.1161597654818615
+  },
+  "decay_0.7": {
+    "accuracy": 0.4074752656650788,
+    "high_confidence_accuracy": 0.4636363636363636,
+    "high_confidence_ratio": 0.04030780505679736
+  },
+  "decay_0.8": {
+    "accuracy": 0.40197874679369733,
+    "high_confidence_accuracy": 0.46715328467153283,
+    "high_confidence_ratio": 0.05020153902528399
+  },
+  "decay_0.9": {
+    "accuracy": 0.40820813484792967,
+    "high_confidence_accuracy": 0.4659090909090909,
+    "high_confidence_ratio": 0.03224624404543789
+  },
+  "decay_0.95": {
+    "accuracy": 0.4173689996335654,
+    "high_confidence_accuracy": 0.47368421052631576,
+    "high_confidence_ratio": 0.0348112861854159
+  }
+}

@@ -215,6 +215,183 @@ class BaselineLSTM(nn.Module):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
 
+class SentimentAttention(nn.Module):
+    """
+    Attention mechanism over sentiment features in the lookback window.
+    
+    This is an Iteration 3 enhancement. The idea is to learn which days
+    in the lookback window are most important for prediction (typically
+    days with strong sentiment signals).
+    
+    Uses multi-head self-attention with residual connection and layer norm.
+    """
+    
+    def __init__(self, hidden_size: int, num_heads: int = 4, dropout: float = 0.1):
+        super().__init__()
+        self.attention = nn.MultiheadAttention(
+            embed_dim=hidden_size,
+            num_heads=num_heads,
+            dropout=dropout,
+            batch_first=True,
+        )
+        self.layer_norm = nn.LayerNorm(hidden_size)
+        
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Apply self-attention over sequence.
+        
+        Args:
+            x: (batch, seq_len, hidden_size)
+            
+        Returns:
+            attended: (batch, seq_len, hidden_size) - attention-weighted output
+            weights: (batch, seq_len, seq_len) - attention weights for visualization
+        """
+        attended, weights = self.attention(x, x, x)
+        attended = self.layer_norm(attended + x)  # Residual connection
+        return attended, weights
+
+
+class AttentionLSTM(nn.Module):
+    """
+    LSTM with attention mechanism for sentiment weighting.
+    
+    This extends BaselineLSTM by adding attention over the LSTM outputs
+    to focus on important timesteps (high-sentiment days).
+    
+    Architecture:
+    - LSTM processes the full sequence
+    - Self-attention weights the LSTM outputs
+    - Weighted representation fed to classification heads
+    """
+    
+    def __init__(
+        self,
+        input_size: int,
+        hidden_size: int = 128,
+        num_layers: int = 2,
+        dropout: float = 0.3,
+        num_heads: int = 4,
+        num_trend_classes: int = 3,
+    ):
+        super().__init__()
+        
+        self.hidden_size = hidden_size
+        self.num_trend_classes = num_trend_classes
+        
+        # LSTM layers
+        self.lstm = nn.LSTM(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=dropout if num_layers > 1 else 0,
+        )
+        
+        # Attention over LSTM outputs
+        self.attention = SentimentAttention(hidden_size, num_heads, dropout)
+        
+        # Output layers
+        self.fc = nn.Sequential(
+            nn.Linear(hidden_size, 64),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+        )
+        
+        self.trend_head = nn.Sequential(
+            nn.Linear(64, 32),
+            nn.ReLU(),
+            nn.Dropout(dropout / 2),
+            nn.Linear(32, num_trend_classes),
+        )
+        
+        self.confidence_head = nn.Sequential(
+            nn.Linear(64, 32),
+            nn.ReLU(),
+            nn.Dropout(dropout / 2),
+            nn.Linear(32, 1),
+        )
+        
+        self._init_weights()
+        
+        logger.info(f"AttentionLSTM initialized: input={input_size}, hidden={hidden_size}, "
+                    f"layers={num_layers}, heads={num_heads}")
+    
+    def _init_weights(self):
+        """Initialize model weights."""
+        for name, param in self.lstm.named_parameters():
+            if "weight_ih" in name:
+                nn.init.xavier_uniform_(param)
+            elif "weight_hh" in name:
+                nn.init.orthogonal_(param)
+            elif "bias" in name:
+                nn.init.zeros_(param)
+        
+        for module in [self.fc, self.trend_head, self.confidence_head]:
+            for layer in module:
+                if isinstance(layer, nn.Linear):
+                    nn.init.xavier_uniform_(layer.weight)
+                    nn.init.zeros_(layer.bias)
+        
+    def forward(
+        self,
+        x: torch.Tensor,
+        return_attention: bool = False,
+    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+        """
+        Forward pass.
+        
+        Args:
+            x: Input tensor of shape (batch, sequence_length, input_size)
+            return_attention: Whether to return attention weights
+            
+        Returns:
+            Tuple of:
+            - trend_logits: (batch, num_trend_classes)
+            - confidence_logits: (batch, 1)
+            - attn_weights: (batch, seq_len, seq_len) if return_attention else None
+        """
+        # LSTM forward
+        lstm_out, _ = self.lstm(x)  # (batch, seq_len, hidden_size)
+        
+        # Apply attention
+        attended, attn_weights = self.attention(lstm_out)
+        
+        # Use attended representation from last timestep
+        final = attended[:, -1, :]  # (batch, hidden_size)
+        
+        # Shared representation
+        shared = self.fc(final)
+        
+        # Output heads
+        trend_logits = self.trend_head(shared)
+        confidence_logits = self.confidence_head(shared)
+        
+        if return_attention:
+            return trend_logits, confidence_logits, attn_weights
+        return trend_logits, confidence_logits, None
+    
+    def predict(self, x: torch.Tensor, threshold: float = 0.5) -> Dict[str, torch.Tensor]:
+        """Make predictions with confidence filtering."""
+        self.eval()
+        with torch.no_grad():
+            trend_logits, confidence_logits, _ = self.forward(x)
+            trend_probs = F.softmax(trend_logits, dim=-1)
+            trend_class = trend_probs.argmax(dim=-1)
+            confidence = torch.sigmoid(confidence_logits)
+            
+            return {
+                "trend_class": trend_class,
+                "trend_probs": trend_probs,
+                "confidence": confidence.squeeze(-1),
+                "should_trade": confidence.squeeze(-1) > threshold,
+            }
+    
+    def get_num_parameters(self) -> int:
+        """Get total number of trainable parameters."""
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+
+
 class DualBranchLSTM(nn.Module):
     """
     Dual-branch LSTM for separate price and sentiment processing.
@@ -275,8 +452,9 @@ class DualBranchLSTM(nn.Module):
         )
         
         # Combined representation
+        # Weighted (1) + Price (1) + Sentiment (1) = 3 * hidden_size
         self.fc_combined = nn.Sequential(
-            nn.Linear(hidden_size * 2, 64),
+            nn.Linear(hidden_size * 3, 64),
             nn.ReLU(),
             nn.Dropout(dropout),
         )

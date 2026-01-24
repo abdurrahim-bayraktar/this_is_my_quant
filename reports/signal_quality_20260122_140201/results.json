@@ -1,0 +1,54 @@
+{
+  "overall": {
+    "correlation": -0.006388943171243357,
+    "p_value": 0.7779263019033451,
+    "n_samples": 1951,
+    "significant": false
+  },
+  "by_ticker": {
+    "TSLA": {
+      "correlation": 0.025004199777007498,
+      "p_value": 0.7066415124323483,
+      "n_samples": 229,
+      "significant": false
+    },
+    "AAPL": {
+      "correlation": -0.2297071504949545,
+      "p_value": 0.08009266495391129,
+      "n_samples": 59,
+      "significant": false
+    },
+    "NVDA": {
+      "correlation": 0.029830460155317987,
+      "p_value": 0.31790938272016317,
+      "n_samples": 1123,
+      "significant": false
+    },
+    "AMD": {
+      "correlation": -0.2523539389897942,
+      "p_value": 0.01523201679604772,
+      "n_samples": 92,
+      "significant": true
+    },
+    "AMZN": {
+      "correlation": -0.2720329781274623,
+      "p_value": 0.1788194317185131,
+      "n_samples": 26,
+      "significant": false
+    },
+    "GOOGL": {
+      "correlation": -0.038006692510235224,
+      "p_value": 0.4361427214315433,
+      "n_samples": 422,
+      "significant": false
+    }
+  },
+  "by_sentiment_strength": {
+    "high_sentiment_mean_return": 0.0028550993177023512,
+    "low_sentiment_mean_return": 0.002148559758834182,
+    "neutral_mean_return": 0.0018214125564803903,
+    "high_count": 610,
+    "low_count": 445,
+    "neutral_count": 896
+  }
+}

@@ -1,0 +1,5 @@
+model,accuracy,n_params
+random_forest,0.5469387755102041,
+gradient_boosting,0.5387755102040817,
+lstm_small,0.5183673469387755,13795.0
+lstm_medium,0.47346938775510206,64739.0

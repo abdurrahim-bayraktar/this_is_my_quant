@@ -57,7 +57,18 @@ def load_and_prepare_data(
     
     # 1. Load price data
     loader = DatasetLoader(tickers=tickers, use_cache=use_cache)
-    news_df, prices_df = loader.load_fnspid()
+    
+    # PRIORITY 1: Load from local 23GB FNSPID CSV if available (Best Data)
+    logger.info("Attempting to load high-quality FNSPID data from local cache...")
+    news_df, prices_df = loader.load_from_local_cache()
+    
+    if len(news_df) == 0:
+        # PRIORITY 2: Intersection Strategy with Twitter Data (Fallback)
+        # Only use this if local data is missing, though Twitter data lacks dates
+        logger.warning("Local FNSPID not found. Falling back to Twitter Intersection (limited utility without dates)...")
+        news_df, prices_df = loader.load_data_with_sentiment_intersection(min_news_count=20)
+    
+    # 2. Feature engineering
     
     # 2. Feature engineering
     engineer = FeatureEngineer()

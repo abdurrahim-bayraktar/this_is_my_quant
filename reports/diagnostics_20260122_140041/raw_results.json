@@ -1,0 +1,14 @@
+{
+  "Overfitting Sanity Check": {
+    "status": "PASS",
+    "description": "Tests if model can memorize synthetic data (no bug in architecture)",
+    "return_code": 0,
+    "reason": null
+  },
+  "Signal Quality Analysis": {
+    "status": "PASS",
+    "description": "Measures correlation between sentiment and next-day returns",
+    "return_code": 0,
+    "reason": null
+  }
+}

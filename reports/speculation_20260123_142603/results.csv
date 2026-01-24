@@ -1,0 +1,7 @@
+ticker,variant,accuracy,error
+WMT,baseline,0.0,'sentiment_value'
+WMT,attention,0.0,'sentiment_value'
+DIS,baseline,0.0,'sentiment_value'
+DIS,attention,0.0,'sentiment_value'
+MSFT,baseline,0.0,'sentiment_value'
+MSFT,attention,0.0,'sentiment_value'

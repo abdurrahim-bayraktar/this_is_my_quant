@@ -65,7 +65,15 @@ class SentimentExtractor:
             batch_size: Batch size for inference. Default: 16.
         """
         self.model_name = model_name or sentiment_config.model_name
-        self.device = device or sentiment_config.device
+        
+        # Dynamic device detection (override config if CUDA is available now but wasn't slightly earlier)
+        if device:
+            self.device = device
+        elif torch.cuda.is_available():
+            self.device = "cuda"
+        else:
+            self.device = sentiment_config.device
+            
         self.max_length = max_length or sentiment_config.max_length
         self.batch_size = batch_size or sentiment_config.batch_size
         

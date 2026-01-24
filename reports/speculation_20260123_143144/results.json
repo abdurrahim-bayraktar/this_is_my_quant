@@ -1,0 +1,50 @@
+{
+  "WMT": {
+    "baseline": {
+      "accuracy": 0.2222222222222222,
+      "train_samples": 1129,
+      "val_samples": 242,
+      "test_samples": 243,
+      "num_features": 29
+    },
+    "attention": {
+      "accuracy": 0.2839506172839506,
+      "train_samples": 1129,
+      "val_samples": 242,
+      "test_samples": 243,
+      "num_features": 29
+    }
+  },
+  "DIS": {
+    "baseline": {
+      "accuracy": 0.33035714285714285,
+      "train_samples": 1041,
+      "val_samples": 223,
+      "test_samples": 224,
+      "num_features": 29
+    },
+    "attention": {
+      "accuracy": 0.29464285714285715,
+      "train_samples": 1041,
+      "val_samples": 223,
+      "test_samples": 224,
+      "num_features": 29
+    }
+  },
+  "MSFT": {
+    "baseline": {
+      "accuracy": 0.3090909090909091,
+      "train_samples": 511,
+      "val_samples": 110,
+      "test_samples": 110,
+      "num_features": 29
+    },
+    "attention": {
+      "accuracy": 0.3181818181818182,
+      "train_samples": 511,
+      "val_samples": 110,
+      "test_samples": 110,
+      "num_features": 29
+    }
+  }
+}

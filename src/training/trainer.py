@@ -95,8 +95,12 @@ class Trainer:
         self.checkpoint_dir = MODELS_DIR / self.experiment_name
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         
+        # Detect if using CombinedLoss (returns tuple) or simple loss
+        self._is_combined_loss = hasattr(loss_fn, 'trend_weight')
+        
         logger.info(f"Trainer initialized on {self.device}")
         logger.info(f"Mixed precision: {self.mixed_precision}")
+        logger.info(f"Using combined loss: {self._is_combined_loss}")
     
     def train_epoch(
         self,
@@ -129,7 +133,11 @@ class Trainer:
             if self.mixed_precision:
                 with autocast():
                     trend_logits, confidence, _ = self.model(X)
-                    loss, loss_dict = self.loss_fn(trend_logits, confidence, y)
+                    if self._is_combined_loss:
+                        loss, loss_dict = self.loss_fn(trend_logits, confidence, y)
+                    else:
+                        loss = self.loss_fn(trend_logits, y)
+                        loss_dict = {"accuracy": (trend_logits.argmax(dim=-1) == y).float().mean().item()}
                 
                 # Backward pass with scaling
                 self.scaler.scale(loss).backward()
@@ -145,7 +153,11 @@ class Trainer:
                 self.scaler.update()
             else:
                 trend_logits, confidence, _ = self.model(X)
-                loss, loss_dict = self.loss_fn(trend_logits, confidence, y)
+                if self._is_combined_loss:
+                    loss, loss_dict = self.loss_fn(trend_logits, confidence, y)
+                else:
+                    loss = self.loss_fn(trend_logits, y)
+                    loss_dict = {"accuracy": (trend_logits.argmax(dim=-1) == y).float().mean().item()}
                 
                 loss.backward()
                 
@@ -201,13 +213,19 @@ class Trainer:
             y = y.to(self.device)
             
             trend_logits, confidence_logits, _ = self.model(X)
-            loss, _ = self.loss_fn(trend_logits, confidence_logits, y)
+            if self._is_combined_loss:
+                loss, _ = self.loss_fn(trend_logits, confidence_logits, y)
+            else:
+                loss = self.loss_fn(trend_logits, y)
             
             total_loss += loss.item() * X.size(0)
             all_preds.extend(trend_logits.argmax(dim=-1).cpu().numpy())
             all_targets.extend(y.cpu().numpy())
-            # Apply sigmoid to get probabilities from logits
-            all_confidences.extend(torch.sigmoid(confidence_logits).squeeze(-1).cpu().numpy())
+            # Apply sigmoid to get probabilities from logits (if available)
+            if confidence_logits is not None:
+                all_confidences.extend(torch.sigmoid(confidence_logits).squeeze(-1).cpu().numpy())
+            else:
+                all_confidences.extend([0.5] * len(y))  # Default confidence
         
         all_preds = np.array(all_preds)
         all_targets = np.array(all_targets)
@@ -320,6 +338,92 @@ class Trainer:
             json.dump(convert_to_serializable(self.training_history), f, indent=2)
         
         return {"history": self.training_history}
+    
+    def curriculum_train(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        sentiment_col_idx: int,
+        high_sentiment_threshold: float = 0.5,
+        phase1_epochs: int = 10,
+        phase2_epochs: int = 20,
+    ) -> Dict[str, List]:
+        """
+        Curriculum learning: train on high-sentiment days first.
+        
+        This is an Iteration 3 enhancement. The idea is that days with
+        strong sentiment signals are easier to learn from, so we train
+        on those first, then fine-tune on all data.
+        
+        Phase 1: Train only on samples where |sentiment| > threshold
+        Phase 2: Fine-tune on all data
+        
+        Args:
+            X: Feature array (n_samples, seq_len, n_features)
+            y: Target array (n_samples,)
+            sentiment_col_idx: Index of sentiment_mean in features
+            high_sentiment_threshold: Threshold for high-sentiment filtering
+            phase1_epochs: Epochs for phase 1 training
+            phase2_epochs: Epochs for phase 2 fine-tuning
+            
+        Returns:
+            Dictionary with training history.
+        """
+        # Phase 1: High-sentiment samples only
+        # Use the sentiment from the last timestep in each sequence
+        sentiment_values = X[:, -1, sentiment_col_idx]
+        high_sentiment_mask = np.abs(sentiment_values) > high_sentiment_threshold
+        
+        X_phase1 = X[high_sentiment_mask]
+        y_phase1 = y[high_sentiment_mask]
+        
+        logger.info(f"=== CURRICULUM LEARNING ===")
+        logger.info(f"Phase 1: {len(X_phase1)} high-sentiment samples "
+                    f"({len(X_phase1)/len(X):.1%} of data)")
+        
+        if len(X_phase1) < 100:
+            logger.warning("Too few high-sentiment samples, using standard training")
+            train_size = int(0.85 * len(X))
+            train_loader = self._create_loader(X[:train_size], y[:train_size], shuffle=True)
+            val_loader = self._create_loader(X[train_size:], y[train_size:])
+            return self.train(train_loader, val_loader, epochs=phase1_epochs + phase2_epochs)
+        
+        # Create phase 1 data loaders
+        train_size = int(0.85 * len(X_phase1))
+        train_loader = self._create_loader(X_phase1[:train_size], y_phase1[:train_size], shuffle=True)
+        val_loader = self._create_loader(X_phase1[train_size:], y_phase1[train_size:])
+        
+        # Train phase 1
+        logger.info("=== PHASE 1: High-Sentiment Days ===")
+        self.train(train_loader, val_loader, epochs=phase1_epochs)
+        
+        # Phase 2: All data (fine-tuning)
+        logger.info("=== PHASE 2: Full Dataset Fine-tuning ===")
+        train_size = int(0.85 * len(X))
+        train_loader = self._create_loader(X[:train_size], y[:train_size], shuffle=True)
+        val_loader = self._create_loader(X[train_size:], y[train_size:])
+        
+        # Reset patience counter for phase 2
+        self.patience_counter = 0
+        
+        return self.train(train_loader, val_loader, epochs=phase2_epochs)
+    
+    def _create_loader(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        shuffle: bool = False,
+    ) -> DataLoader:
+        """Helper to create DataLoader from numpy arrays."""
+        dataset = TensorDataset(
+            torch.FloatTensor(X),
+            torch.LongTensor(y),
+        )
+        return DataLoader(
+            dataset,
+            batch_size=training_config.batch_size,
+            shuffle=shuffle,
+        )
     
     def walk_forward_validation(
         self,

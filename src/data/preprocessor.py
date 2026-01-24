@@ -213,13 +213,15 @@ class DataPreprocessor:
         # If news is on weekend/holiday, use next trading day
         
         def get_trading_date(news_date):
-            news_d = news_date.date()
+            # Normalize to midnight (naive) to match trading_dates
+            news_d_ts = pd.Timestamp(news_date.date())
             
             # If it's a trading day, use it
-            if news_d in trading_dates:
-                return news_date
+            if news_date.date() in trading_dates:
+                return news_d_ts
             
             # Otherwise find next trading day
+            news_d = news_date.date()
             for i in range(1, 5):  # Max 4 days forward
                 next_d = news_d + timedelta(days=i)
                 if next_d in trading_dates:

@@ -1,0 +1,16 @@
+ticker,variant,accuracy,error,high_conf_accuracy,high_conf_ratio,train_samples,test_samples,num_features
+WMT,baseline,0.0,'SentimentAggregator' object has no attribute '_aggregate_time_weighted',,,,,
+WMT,event_features,0.26706231454005935,,0.39473684210526316,0.22551928783382788,1569.0,337.0,31.0
+WMT,curriculum,0.0,'SentimentAggregator' object has no attribute '_aggregate_time_weighted',,,,,
+WMT,attention,0.0,'SentimentAggregator' object has no attribute '_aggregate_time_weighted',,,,,
+WMT,combined,0.27596439169139464,,0.28013029315960913,0.9109792284866469,1569.0,337.0,31.0
+DIS,baseline,0.0,'SentimentAggregator' object has no attribute '_aggregate_time_weighted',,,,,
+DIS,event_features,0.3590504451038576,,0.29508196721311475,0.18100890207715134,1569.0,337.0,31.0
+DIS,curriculum,0.0,'SentimentAggregator' object has no attribute '_aggregate_time_weighted',,,,,
+DIS,attention,0.0,'SentimentAggregator' object has no attribute '_aggregate_time_weighted',,,,,
+DIS,combined,0.32047477744807124,,0.32075471698113206,0.9436201780415431,1569.0,337.0,31.0
+MSFT,baseline,0.0,'SentimentAggregator' object has no attribute '_aggregate_time_weighted',,,,,
+MSFT,event_features,0.35014836795252224,,0.2716049382716049,0.2403560830860534,1569.0,337.0,31.0
+MSFT,curriculum,0.0,'SentimentAggregator' object has no attribute '_aggregate_time_weighted',,,,,
+MSFT,attention,0.0,'SentimentAggregator' object has no attribute '_aggregate_time_weighted',,,,,
+MSFT,combined,0.37388724035608306,,0.39,0.29673590504451036,1569.0,337.0,31.0

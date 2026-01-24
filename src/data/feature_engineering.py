@@ -239,6 +239,152 @@ class FeatureEngineer:
         logger.info(f"Aggregated sentiment for {len(agg_df)} ticker-day pairs")
         return agg_df
     
+    def add_event_based_sentiment_features(
+        self,
+        sentiment_df: pd.DataFrame,
+        date_col: str = "trading_date",
+        ticker_col: str = "ticker",
+        sentiment_col: str = "sentiment_score",
+    ) -> pd.DataFrame:
+        """
+        Add event-based sentiment features that capture extremes.
+        
+        This is an Iteration 3 enhancement to improve signal quality by
+        preserving extreme sentiment events instead of averaging them away.
+        
+        Features added:
+        - sentiment_mean: Daily mean sentiment
+        - sentiment_std: Daily sentiment standard deviation
+        - sentiment_min: Daily minimum sentiment (most negative)
+        - sentiment_max: Daily maximum sentiment (most positive)
+        - sentiment_range: Max - Min (sentiment volatility)
+        - has_extreme_news: Flag for |sentiment| > 0.7
+        - news_count: Number of news items
+        
+        Args:
+            sentiment_df: DataFrame with individual sentiment scores.
+            date_col: Date column for grouping.
+            ticker_col: Ticker column for grouping.
+            sentiment_col: Column with sentiment scores.
+            
+        Returns:
+            DataFrame with daily aggregated sentiment features.
+        """
+        df = sentiment_df.copy()
+        
+        # Ensure sentiment column exists
+        if sentiment_col not in df.columns:
+            # Try alternative column names
+            for alt_col in ['sentiment_positive', 'sentiment_value', 'sentiment']:
+                if alt_col in df.columns:
+                    sentiment_col = alt_col
+                    break
+            else:
+                logger.warning(f"Sentiment column not found, using zeros")
+                df[sentiment_col] = 0.0
+        
+        # Group by ticker and date
+        grouped = df.groupby([ticker_col, date_col])
+        
+        # Aggregate with multiple statistics
+        agg_df = grouped.agg({
+            sentiment_col: ['mean', 'std', 'min', 'max', 'count']
+        }).reset_index()
+        
+        # Flatten column names
+        agg_df.columns = [
+            ticker_col, date_col,
+            'sentiment_mean', 'sentiment_dispersion',
+            'sentiment_min', 'sentiment_max', 'news_count'
+        ]
+        
+        # Compute derived features
+        agg_df['sentiment_range'] = agg_df['sentiment_max'] - agg_df['sentiment_min']
+        
+        # Fix: Use percentile-based threshold instead of fixed 0.7
+        # This ensures ~10% of days are marked as "extreme" regardless of sentiment scale
+        abs_max = agg_df['sentiment_max'].abs()
+        abs_min = agg_df['sentiment_min'].abs()
+        max_sentiment = np.maximum(abs_max, abs_min)
+        
+        # Per-ticker percentile threshold (90th percentile of max sentiment)
+        thresholds = agg_df.groupby(ticker_col)[['sentiment_max']].transform(
+            lambda x: np.percentile(x.abs(), 90)
+        ).values.flatten()
+        
+        # Fallback to 0.3 if threshold is too low (sparse data)
+        thresholds = np.maximum(thresholds, 0.3)
+        
+        agg_df['has_extreme_news'] = (max_sentiment > thresholds).astype(int)
+        
+        # Fill NaN (single article days have no std)
+        agg_df['sentiment_dispersion'] = agg_df['sentiment_dispersion'].fillna(0)
+        
+        logger.info(f"Created event-based features for {len(agg_df)} ticker-day pairs")
+        logger.info(f"  Extreme news days: {agg_df['has_extreme_news'].sum()} ({agg_df['has_extreme_news'].mean():.1%})")
+        
+        return agg_df
+    
+    def add_sentiment_momentum(
+        self,
+        df: pd.DataFrame,
+        sentiment_col: str = "sentiment_mean",
+        ticker_col: str = "ticker",
+    ) -> pd.DataFrame:
+        """
+        Add sentiment momentum features.
+        
+        This is an Iteration 3 enhancement to capture sentiment trends
+        over time, not just point-in-time values.
+        
+        Features added:
+        - sentiment_momentum: 3-day rate of change in sentiment
+        - sentiment_acceleration: Derivative of momentum (momentum of momentum)
+        
+        Args:
+            df: DataFrame with daily sentiment (must have sentiment_mean column).
+            sentiment_col: Column with sentiment values.
+            ticker_col: Ticker column for grouping.
+            
+        Returns:
+            DataFrame with added momentum features.
+        """
+        df = df.copy()
+        
+        if sentiment_col not in df.columns:
+            logger.warning(f"Column {sentiment_col} not found, skipping momentum features")
+            df['sentiment_momentum'] = 0.0
+            df['sentiment_acceleration'] = 0.0
+            return df
+        
+        # Compute momentum per ticker
+        momentum_list = []
+        accel_list = []
+        
+        for ticker, group in df.groupby(ticker_col):
+            group = group.sort_values('date').copy()
+            
+            # 3-day momentum (rate of change)
+            momentum = group[sentiment_col].diff(periods=3)
+            
+            # Acceleration (change in momentum)
+            acceleration = momentum.diff(periods=1)
+            
+            momentum_list.append(momentum)
+            accel_list.append(acceleration)
+        
+        # Combine results
+        df['sentiment_momentum'] = pd.concat(momentum_list).reindex(df.index)
+        df['sentiment_acceleration'] = pd.concat(accel_list).reindex(df.index)
+        
+        # Fill NaN with 0 (neutral)
+        df['sentiment_momentum'] = df['sentiment_momentum'].fillna(0)
+        df['sentiment_acceleration'] = df['sentiment_acceleration'].fillna(0)
+        
+        logger.info(f"Added sentiment momentum features")
+        
+        return df
+    
     def merge_price_and_sentiment(
         self,
         prices_df: pd.DataFrame,
@@ -257,12 +403,17 @@ class FeatureEngineer:
         Returns:
             Merged DataFrame ready for model training.
         """
-        # Standardize date columns
+        # Standardize date columns - handle timezone issues
         prices = prices_df.copy()
         sentiment = sentiment_df.copy()
         
-        prices["merge_date"] = pd.to_datetime(prices[price_date_col]).dt.date
-        sentiment["merge_date"] = pd.to_datetime(sentiment[sentiment_date_col]).dt.date
+        # Convert to datetime and remove timezone info to avoid comparison issues
+        # Using utc=True ensures uniform handling before removing timezone
+        prices_dates = pd.to_datetime(prices[price_date_col], utc=True).dt.tz_localize(None)
+        prices["merge_date"] = prices_dates.dt.date
+        
+        sentiment_dates = pd.to_datetime(sentiment[sentiment_date_col], utc=True).dt.tz_localize(None)
+        sentiment["merge_date"] = sentiment_dates.dt.date
         
         # Merge on ticker and date
         merged = prices.merge(
@@ -272,15 +423,18 @@ class FeatureEngineer:
         )
         
         # Fill missing sentiment with neutral values
-        sentiment_cols = ["sentiment_mean", "sentiment_dispersion", "news_count"]
+        # Iteration 3 updates: added max/min/range/momentum
+        # Iteration 3b: Sticky Sentiment features
+        sentiment_cols = [
+            "sentiment_mean", "sentiment_dispersion", "news_count", "has_news",
+            "sentiment_max", "sentiment_min", "sentiment_range", "has_extreme_news",
+            "sentiment_momentum", "sentiment_acceleration",
+            "sentiment_pos", "sentiment_neg", "sentiment_raw"
+        ]
+        
         for col in sentiment_cols:
             if col in merged.columns:
-                if col == "sentiment_mean":
-                    merged[col] = merged[col].fillna(0)  # Neutral
-                elif col == "sentiment_dispersion":
-                    merged[col] = merged[col].fillna(0)  # No dispersion
-                elif col == "news_count":
-                    merged[col] = merged[col].fillna(0)  # No news
+                merged[col] = merged[col].fillna(0)
         
         merged = merged.drop(columns=["merge_date"])
         
@@ -302,8 +456,21 @@ class FeatureEngineer:
         # Technical indicators
         features.extend(feature_config.technical_indicators)
         
-        # Sentiment features
-        features.extend(["sentiment_mean", "sentiment_dispersion", "news_count"])
+        # Sentiment features (including has_news for temporal alignment)
+        features.extend(["sentiment_mean", "sentiment_dispersion", "news_count", "has_news"])
+        
+        # Iteration 3: Event-based sentiment features
+        features.extend([
+            "sentiment_max", "sentiment_min", "sentiment_range", "has_extreme_news",
+        ])
+        
+        # Iteration 3: Sentiment momentum features
+        features.extend([
+            "sentiment_momentum", "sentiment_acceleration",
+        ])
+        
+        # Iteration 3b: Split Sentiment
+        features.extend(["sentiment_pos", "sentiment_neg"])
         
         return features
 

@@ -56,6 +56,14 @@ class DatasetLoader:
         self.use_cache = use_cache
         self._ticker_set = set(self.tickers)
         
+    def load_twitter_sentiment(self) -> Dataset:
+        """Load Twitter Financial Sentiment dataset."""
+        logger.info("Loading Twitter Financial Sentiment dataset...")
+        # Check cache logic could be added here, but the dataset is small (~50MB)
+        # HuggingFace datasets library handles caching automatically
+        dataset = load_dataset(dataset_config.twitter_sentiment_repo, split="train")
+        return dataset
+        
     def load_fnspid(
         self,
         split: str = "train",
@@ -83,8 +91,69 @@ class DatasetLoader:
             news_df = pd.read_parquet(cache_path.with_suffix(".news.parquet"))
             prices_df = pd.read_parquet(cache_path.with_suffix(".prices.parquet"))
             return news_df, prices_df
-        
-        logger.info("Attempting to load FNSPID dataset...")
+            
+        # PRIORITY CHECK: Look for individual cached files in data/cache/sentiment
+        # This is the "clean" data source created by previous iterations
+        sentiment_cache_dir = CACHE_DIR / "sentiment"
+        if sentiment_cache_dir.exists():
+            logger.info(f"Checking {sentiment_cache_dir} for cached parquet files...")
+            news_dfs = []
+            price_dfs = []
+            found_tickers = []
+            
+            for ticker in self.tickers:
+                n_file = sentiment_cache_dir / f"{ticker}_news.parquet"
+                p_file = sentiment_cache_dir / f"{ticker}_prices.parquet"
+                # s_file = sentiment_cache_dir / f"{ticker}_sentiment.parquet" 
+                
+                # Check for either news or sentiment file (sentiment is better if available)
+                # But load_fnspid expects "news", so we might need to adapt.
+                # Actually, the user wants to use the text data, or the extracted sentiment?
+                # The prompt says "the 23GB file was already processed... sentiment extracted... under data>cache>sentiment"
+                # So we should probably try to load the sentiment parquets if we can, but load_fnspid signature returns (news_df, prices_df).
+                # Let's load the *_sentiment.parquet as "news_df" since it contains the signals we need.
+                
+                s_file = sentiment_cache_dir / f"{ticker}_sentiment.parquet"
+                if s_file.exists() and p_file.exists():
+                    try:
+                        sdf = pd.read_parquet(s_file)
+                        pdf = pd.read_parquet(p_file)
+                        
+                        # Ensure ticker column
+                        sdf["ticker"] = ticker
+                        pdf["ticker"] = ticker
+                        
+                        # Filter by date range
+                        if "date" in sdf.columns:
+                            sdf = sdf[(sdf["date"] >= self.date_range[0]) & (sdf["date"] <= self.date_range[1])]
+                        elif "timestamp" in sdf.columns:
+                            # Rename timestamp to date for consistency
+                            sdf["date"] = sdf["timestamp"]
+                            sdf = sdf[(sdf["date"] >= self.date_range[0]) & (sdf["date"] <= self.date_range[1])]
+                            
+                        pdf = pdf[(pdf["date"] >= self.date_range[0]) & (pdf["date"] <= self.date_range[1])]
+                        
+                        if len(sdf) > 0 and len(pdf) > 0:
+                            news_dfs.append(sdf)
+                            price_dfs.append(pdf)
+                            found_tickers.append(ticker)
+                    except Exception as e:
+                        logger.warning(f"Failed to load cached data for {ticker}: {e}")
+            
+            if len(news_dfs) > 0:
+                logger.info(f"Found cached data for {len(found_tickers)}/{len(self.tickers)} tickers.")
+                combined_news = pd.concat(news_dfs, ignore_index=True)
+                combined_prices = pd.concat(price_dfs, ignore_index=True)
+                
+                # Normalize timezones to prevent merge errors
+                if "date" in combined_news.columns:
+                    combined_news["date"] = pd.to_datetime(combined_news["date"]).dt.tz_localize(None)
+                if "date" in combined_prices.columns:
+                    combined_prices["date"] = pd.to_datetime(combined_prices["date"]).dt.tz_localize(None)
+                
+                return combined_news, combined_prices
+
+        logger.info("Attempting to load FNSPID dataset from HuggingFace/CSV...")
         
         try:
             # Try loading without trust_remote_code (deprecated)
@@ -93,10 +162,9 @@ class DatasetLoader:
                 split=split,
             )
         except Exception as e:
-            logger.warning(f"Could not load FNSPID from HuggingFace: {e}")
-            logger.info("Falling back to Yahoo Finance for price data...")
-            logger.info("(News data will be empty - sentiment features will be neutral)")
-            return self._load_fnspid_from_github()
+            logger.warning(f"Could not load FNSPID from HuggingFace directly: {e}")
+            logger.info("Attempting to load from local large CSV cache...")
+            return self.load_from_local_cache()
         
         # Convert to DataFrame and filter
         df = dataset.to_pandas()
@@ -132,60 +200,183 @@ class DatasetLoader:
         logger.info(f"Loaded {len(news_df)} news records and {len(prices_df)} price records")
         return news_df, prices_df
     
-    def _load_fnspid_from_github(self) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    def load_from_local_cache(self) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
-        Alternative: Load Twitter Financial Sentiment and extract ticker symbols.
+        Load directly from local HuggingFace cache CSVs if available.
+        This bypasses the datasets library which struggles with the 23GB file.
+        """
+        import os
+        from pathlib import Path
         
-        Since FNSPID is large (5.7GB), this provides a lighter alternative using
-        the Twitter Financial Sentiment dataset with ticker extraction.
-        """
-        logger.info("Loading Twitter Financial Sentiment as alternative news source...")
+        # Common HF cache location
+        home = Path.home()
+        hf_cache = home / ".cache" / "huggingface" / "hub"
+        
+        # Look for Zihan1004--FNSPID folder
+        # We search recursively for the nasdaq_exteral_data.csv
+        logger.info(f"Searching for local FNSPID CSV in {hf_cache}...")
+        
+        csv_path = None
+        for path in hf_cache.rglob("nasdaq_exteral_data.csv"):
+            if path.is_file():
+                csv_path = path
+                break
+        
+        if not csv_path:
+            logger.warning("Local FNSPID CSV not found.")
+            return pd.DataFrame(), pd.DataFrame()
+            
+        logger.info(f"Found local FNSPID CSV at: {csv_path}")
+        logger.info(f"Reading large CSV (21GB+) in chunks, filtering for {len(self._ticker_set)} tickers...")
+        
+        chunks = []
+        chunk_size = 100000
+        total_rows = 0
+        matching_rows = 0
         
         try:
+            # We only need specific columns to save memory
+            use_cols = ["Date", "Stock_symbol", "Article_title"]
+            
+            for chunk in tqdm(pd.read_csv(csv_path, chunksize=chunk_size, usecols=lambda c: c in use_cols), desc="Processing chunks"):
+                # Normalize column names
+                chunk.columns = [c.lower() for c in chunk.columns]
+                # date, stock_symbol, article_title
+                
+                # Filter by ticker
+                if "stock_symbol" in chunk.columns:
+                    mask = chunk["stock_symbol"].isin(self._ticker_set)
+                    filtered = chunk[mask].copy()
+                    
+                    if len(filtered) > 0:
+                        # Rename columns to match expected format
+                        filtered = filtered.rename(columns={
+                            "stock_symbol": "ticker",
+                            "article_title": "headline"
+                        })
+                        chunks.append(filtered)
+                        matching_rows += len(filtered)
+                
+                total_rows += len(chunk)
+                # Optional: limit for testing
+                # if total_rows > 1000000: break
+                
+        except Exception as e:
+            logger.error(f"Error reading CSV chunk: {e}")
+            return pd.DataFrame(), pd.DataFrame()
+            
+        if not chunks:
+            logger.warning("No matching data found in local CSV.")
+            return pd.DataFrame(), pd.DataFrame()
+            
+        logger.info(f"Processed {total_rows:,} rows, found {matching_rows:,} matching records.")
+        news_df = pd.concat(chunks, ignore_index=True)
+        
+        # Post-process
+        news_df["date"] = pd.to_datetime(news_df["date"], errors='coerce')
+        news_df = news_df.dropna(subset=["date"])
+        
+        # Filter by date range
+        news_df = news_df[
+            (news_df["date"] >= self.date_range[0]) &
+            (news_df["date"] <= self.date_range[1])
+        ]
+        
+        # Load prices
+        prices_df = self._load_prices_yfinance()
+        
+        return news_df, prices_df
+    
+    def load_data_with_sentiment_intersection(
+        self, 
+        min_news_count: int = 10
+    ) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        """
+        Load data ONLY for tickers that have sufficient sentiment data.
+        
+        This prevents the "Zero Sentiment Trap" where the model learns to
+        ignore sentiment because most stocks have none.
+        
+        Args:
+            min_news_count: Minimum number of sentiment records required.
+            
+        Returns:
+            Tuple[news_df, prices_df] for the valid intersection of tickers.
+        """
+        logger.info(f"Loading data with sentiment intersection (min_count={min_news_count})...")
+        
+        # 1. Load Sentiment Data First
+        # We try FNSPID first, then fallback to Twitter
+        try:
+            # Check if full FNSPID is available (rare/large)
+            # For now, let's prioritize the Twitter dataset as it's verified working
             twitter_data = self.load_twitter_sentiment()
             
-            # Convert to DataFrame
+            # Extract basic records from Twitter
             news_records = []
             ticker_pattern = r'\$([A-Z]{1,5})\b'
             import re
             
             for item in twitter_data:
                 text = item['text']
-                label = item['label']  # 0=Bearish, 1=Bullish, 2=Neutral
-                
-                # Extract ticker symbols from tweet (e.g., $AAPL, $TSLA)
+                label = item['label']
                 tickers_found = re.findall(ticker_pattern, text)
                 
-                # Map label to sentiment
                 sentiment_map = {0: 'negative', 1: 'positive', 2: 'neutral'}
                 sentiment = sentiment_map.get(label, 'neutral')
                 
                 for ticker in tickers_found:
-                    if ticker in self._ticker_set:
-                        news_records.append({
-                            'date': pd.Timestamp.now(),  # No date in this dataset
-                            'ticker': ticker,
-                            'headline': text,
-                            'sentiment_label': sentiment,
-                            'sentiment_score': 1.0 if label != 2 else 0.5,
-                        })
+                    news_records.append({
+                        'date': pd.Timestamp.now(), # Placeholder date
+                        'ticker': ticker,
+                        'headline': text,
+                        'sentiment_label': sentiment,
+                        'sentiment_score': 1.0 if label != 2 else 0.5,
+                        'original_label': label 
+                    })
             
             news_df = pd.DataFrame(news_records)
-            logger.info(f"Extracted {len(news_df)} ticker-specific sentiment records from Twitter data")
             
-            if len(news_df) == 0:
-                logger.warning("No matching tickers found in Twitter data. Using empty news DataFrame.")
-                news_df = pd.DataFrame(columns=["date", "ticker", "headline", "sentiment_label"])
-                
         except Exception as e:
-            logger.warning(f"Could not load Twitter sentiment: {e}")
-            news_df = pd.DataFrame(columns=["date", "ticker", "headline", "sentiment_label"])
+            logger.error(f"Failed to load initial sentiment data: {e}")
+            return pd.DataFrame(), pd.DataFrame()
+
+        if len(news_df) == 0:
+            logger.warning("No sentiment data found.")
+            return pd.DataFrame(), pd.DataFrame()
+
+        # 2. Filter Tickers
+        # Count news per ticker
+        ticker_counts = news_df['ticker'].value_counts()
+        valid_tickers = ticker_counts[ticker_counts >= min_news_count].index.tolist()
         
-        # Load prices from yfinance
+        # Intersect with the user's requested tickers (if any were specific)
+        # Note: self.tickers is currently TOP_200_TICKERS usually
+        # We should prioritize valid_tickers, but maybe limit by TOP_200 to keep quality high?
+        # Let's keep valid_tickers that are ALSO in our universe (to avoid penny stocks)
+        
+        # universe_set = set(self.tickers) 
+        # final_tickers = [t for t in valid_tickers if t in universe_set]
+        
+        # Actually, let's trust the sentiment signal for now. If people talk about it, it's relevant.
+        # But we must limit the number to avoid downloading 2000 stocks prices
+        final_tickers = valid_tickers[:50] # Take top 50 most talked about stocks
+        
+        logger.info(f"Found {len(final_tickers)} stocks with >{min_news_count} sentiment records.")
+        logger.info(f"Top 5 discussed: {final_tickers[:5]}")
+        
+        # 3. Update self.tickers for price loading
+        self.tickers = final_tickers
+        self._ticker_set = set(final_tickers)
+        
+        # 4. Filter News DataFrame
+        news_df = news_df[news_df['ticker'].isin(self._ticker_set)]
+        
+        # 5. Load Prices for these tickers
         prices_df = self._load_prices_yfinance()
         
         return news_df, prices_df
-    
+
     def _load_prices_yfinance(self) -> pd.DataFrame:
         """
         Load price data from Yahoo Finance as fallback.

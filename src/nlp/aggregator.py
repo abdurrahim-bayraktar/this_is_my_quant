@@ -73,106 +73,98 @@ class SentimentAggregator:
             return self._aggregate_time_weighted(
                 df, sentiment_col, date_col, ticker_col, timestamp_col
             )
-        elif self.strategy == "volume_weighted":
-            return self._aggregate_volume_weighted(
-                df, sentiment_col, date_col, ticker_col, engagement_col
+        elif self.strategy == "sticky":
+            return self._aggregate_sticky(
+                df, sentiment_col, date_col, ticker_col
             )
-        else:
-            logger.warning(f"Unknown strategy {self.strategy}, using simple")
+        else:  # volume_weighted or default
+            # Fallback to simple
+            if self.strategy != "simple":
+                logger.warning(f"Unknown strategy {self.strategy}, using simple")
             return self._aggregate_simple(df, sentiment_col, date_col, ticker_col)
-    
-    def _aggregate_simple(
+            
+    def _aggregate_sticky(
         self,
         df: pd.DataFrame,
         sentiment_col: str,
         date_col: str,
         ticker_col: str,
-    ) -> pd.DataFrame:
-        """Simple mean aggregation."""
-        
-        agg_funcs = {
-            sentiment_col: ["mean", "std", "count"],
-        }
-        
-        # Add label distribution if available
-        if "sentiment_label" in df.columns:
-            agg_funcs["sentiment_label"] = lambda x: (x == "positive").mean()
-        
-        grouped = df.groupby([ticker_col, date_col]).agg(agg_funcs)
-        grouped.columns = ["_".join(col).strip("_") for col in grouped.columns.values]
-        grouped = grouped.reset_index()
-        
-        # Rename columns for clarity
-        grouped = grouped.rename(columns={
-            f"{sentiment_col}_mean": "sentiment_mean",
-            f"{sentiment_col}_std": "sentiment_dispersion",
-            f"{sentiment_col}_count": "news_count",
-            "sentiment_label_<lambda>": "bullish_ratio",
-        })
-        
-        # Fill NaN dispersion (when only 1 article)
-        grouped["sentiment_dispersion"] = grouped["sentiment_dispersion"].fillna(0)
-        
-        logger.info(f"Aggregated {len(df)} records to {len(grouped)} daily observations")
-        return grouped
-    
-    def _aggregate_time_weighted(
-        self,
-        df: pd.DataFrame,
-        sentiment_col: str,
-        date_col: str,
-        ticker_col: str,
-        timestamp_col: str = None,
+        threshold: float = 0.1,
+        decay_alpha: float = 0.95,
     ) -> pd.DataFrame:
         """
-        Time-weighted average: more recent news gets higher weight.
+        Sticky sentiment aggregation.
         
-        Uses exponential decay with ~4 hour half-life.
+        Logic:
+        - If today has significant news (|score| > threshold): update state
+        - If today is neutral/silent: decay previous state slowly
+        - Also splits into positive and negative sentiment streams
         """
         df = df.copy()
         
-        if timestamp_col and timestamp_col in df.columns:
-            # Calculate hours until market close (16:00)
-            df["timestamp"] = pd.to_datetime(df[timestamp_col])
-            market_close = df["timestamp"].dt.normalize() + pd.Timedelta(hours=16)
-            df["hours_to_close"] = (market_close - df["timestamp"]).dt.total_seconds() / 3600
-            df["hours_to_close"] = df["hours_to_close"].clip(lower=0)
+        # Sort chronologically
+        df = df.sort_values([ticker_col, date_col])
+        
+        daily_records = []
+        
+        for ticker, group in df.groupby(ticker_col):
+            # Process each ticker's timeline
+            current_state = 0.0
+            current_pos_state = 0.0
+            current_neg_state = 0.0
             
-            # Exponential weight: more recent = higher weight
-            half_life = 4  # hours
-            df["time_weight"] = np.exp(-df["hours_to_close"] / half_life)
-        else:
-            # No timestamp, use equal weights
-            df["time_weight"] = 1.0
-        
-        # Weighted aggregation
-        def weighted_mean(group):
-            weights = group["time_weight"]
-            values = group[sentiment_col]
-            return (values * weights).sum() / weights.sum()
-        
-        def weighted_std(group):
-            weights = group["time_weight"]
-            values = group[sentiment_col]
-            mean = (values * weights).sum() / weights.sum()
-            variance = (weights * (values - mean) ** 2).sum() / weights.sum()
-            return np.sqrt(variance)
-        
-        results = []
-        for (ticker, date), group in df.groupby([ticker_col, date_col]):
-            results.append({
-                ticker_col: ticker,
-                date_col: date,
-                "sentiment_mean": weighted_mean(group),
-                "sentiment_dispersion": weighted_std(group) if len(group) > 1 else 0,
-                "news_count": len(group),
-                "bullish_ratio": (group["sentiment_label"] == "positive").mean() if "sentiment_label" in group.columns else 0.5,
-            })
-        
-        result_df = pd.DataFrame(results)
-        logger.info(f"Time-weighted aggregation: {len(result_df)} daily observations")
+            # Group by day first to get daily raw signals
+            daily_groups = group.groupby(date_col)
+            
+            for date, daily_news in daily_groups:
+                # Calculate daily raw stats
+                daily_mean = daily_news[sentiment_col].mean()
+                
+                # Split features
+                if "sentiment_positive" in daily_news.columns:
+                    daily_pos = daily_news["sentiment_positive"].mean()
+                    daily_neg = daily_news["sentiment_negative"].mean()
+                else:
+                    # Infer from value
+                    daily_pos = daily_news[daily_news[sentiment_col] > 0][sentiment_col].mean() if (daily_news[sentiment_col] > 0).any() else 0
+                    daily_neg = -daily_news[daily_news[sentiment_col] < 0][sentiment_col].mean() if (daily_news[sentiment_col] < 0).any() else 0
+                
+                # Update Sticky State
+                # If significant news update state
+                if abs(daily_mean) > threshold:
+                    current_state = daily_mean
+                else:
+                    # Decay slowly
+                    current_state = current_state * decay_alpha
+                    
+                # Update split states independently? 
+                # Or just use daily values? 
+                # Let's apply sticky logic to split states too
+                if daily_pos > threshold:
+                    current_pos_state = daily_pos
+                else:
+                    current_pos_state = current_pos_state * decay_alpha
+                    
+                if daily_neg > threshold:
+                    current_neg_state = daily_neg
+                else:
+                    current_neg_state = current_neg_state * decay_alpha
+                
+                daily_records.append({
+                    ticker_col: ticker,
+                    date_col: date,
+                    "sentiment_mean": current_state,  # Sticky mean
+                    "sentiment_pos": current_pos_state, # Sticky positive
+                    "sentiment_neg": current_neg_state, # Sticky negative
+                    "sentiment_raw": daily_mean,      # Raw mean (for reference)
+                    "news_count": len(daily_news),
+                    "sentiment_dispersion": daily_news[sentiment_col].std() if len(daily_news) > 1 else 0
+                })
+                
+        result_df = pd.DataFrame(daily_records)
+        logger.info(f"Sticky aggregation: {len(result_df)} daily observations")
         return result_df
-    
+        
     def _aggregate_volume_weighted(
         self,
         df: pd.DataFrame,

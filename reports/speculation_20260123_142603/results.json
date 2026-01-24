@@ -1,0 +1,32 @@
+{
+  "WMT": {
+    "baseline": {
+      "accuracy": 0.0,
+      "error": "'sentiment_value'"
+    },
+    "attention": {
+      "accuracy": 0.0,
+      "error": "'sentiment_value'"
+    }
+  },
+  "DIS": {
+    "baseline": {
+      "accuracy": 0.0,
+      "error": "'sentiment_value'"
+    },
+    "attention": {
+      "accuracy": 0.0,
+      "error": "'sentiment_value'"
+    }
+  },
+  "MSFT": {
+    "baseline": {
+      "accuracy": 0.0,
+      "error": "'sentiment_value'"
+    },
+    "attention": {
+      "accuracy": 0.0,
+      "error": "'sentiment_value'"
+    }
+  }
+}

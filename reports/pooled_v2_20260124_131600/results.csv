@@ -1,0 +1,3 @@
+experiment,n_features,n_params,total_samples,test_accuracy,class_0_acc,class_1_acc,class_2_acc,selected_features
+full_indicators,49,236292,525558,0.4366770682700358,0.3917713453486255,0.48266837268814705,0.4339882433935286,
+selected_12_features,12,217348,525558,0.44050156024050535,0.3684468698264762,0.5164445461305268,0.43237049669580047,"['atr_pct', 'atr', 'intraday_range', 'bb_BBB_5_2.0_2.0', 'gap', 'return_5d', 'obv', 'cci', 'macd_MACD_12_26_9', 'adx_DMN_14', 'rsi_14', 'macd_MACDs_12_26_9']"

@@ -1,0 +1,92 @@
+{
+  "WMT": {
+    "baseline": {
+      "accuracy": 0.0,
+      "error": "'SentimentAggregator' object has no attribute '_aggregate_time_weighted'"
+    },
+    "event_features": {
+      "accuracy": 0.26706231454005935,
+      "high_conf_accuracy": 0.39473684210526316,
+      "high_conf_ratio": 0.22551928783382788,
+      "train_samples": 1569,
+      "test_samples": 337,
+      "num_features": 31
+    },
+    "curriculum": {
+      "accuracy": 0.0,
+      "error": "'SentimentAggregator' object has no attribute '_aggregate_time_weighted'"
+    },
+    "attention": {
+      "accuracy": 0.0,
+      "error": "'SentimentAggregator' object has no attribute '_aggregate_time_weighted'"
+    },
+    "combined": {
+      "accuracy": 0.27596439169139464,
+      "high_conf_accuracy": 0.28013029315960913,
+      "high_conf_ratio": 0.9109792284866469,
+      "train_samples": 1569,
+      "test_samples": 337,
+      "num_features": 31
+    }
+  },
+  "DIS": {
+    "baseline": {
+      "accuracy": 0.0,
+      "error": "'SentimentAggregator' object has no attribute '_aggregate_time_weighted'"
+    },
+    "event_features": {
+      "accuracy": 0.3590504451038576,
+      "high_conf_accuracy": 0.29508196721311475,
+      "high_conf_ratio": 0.18100890207715134,
+      "train_samples": 1569,
+      "test_samples": 337,
+      "num_features": 31
+    },
+    "curriculum": {
+      "accuracy": 0.0,
+      "error": "'SentimentAggregator' object has no attribute '_aggregate_time_weighted'"
+    },
+    "attention": {
+      "accuracy": 0.0,
+      "error": "'SentimentAggregator' object has no attribute '_aggregate_time_weighted'"
+    },
+    "combined": {
+      "accuracy": 0.32047477744807124,
+      "high_conf_accuracy": 0.32075471698113206,
+      "high_conf_ratio": 0.9436201780415431,
+      "train_samples": 1569,
+      "test_samples": 337,
+      "num_features": 31
+    }
+  },
+  "MSFT": {
+    "baseline": {
+      "accuracy": 0.0,
+      "error": "'SentimentAggregator' object has no attribute '_aggregate_time_weighted'"
+    },
+    "event_features": {
+      "accuracy": 0.35014836795252224,
+      "high_conf_accuracy": 0.2716049382716049,
+      "high_conf_ratio": 0.2403560830860534,
+      "train_samples": 1569,
+      "test_samples": 337,
+      "num_features": 31
+    },
+    "curriculum": {
+      "accuracy": 0.0,
+      "error": "'SentimentAggregator' object has no attribute '_aggregate_time_weighted'"
+    },
+    "attention": {
+      "accuracy": 0.0,
+      "error": "'SentimentAggregator' object has no attribute '_aggregate_time_weighted'"
+    },
+    "combined": {
+      "accuracy": 0.37388724035608306,
+      "high_conf_accuracy": 0.39,
+      "high_conf_ratio": 0.29673590504451036,
+      "train_samples": 1569,
+      "test_samples": 337,
+      "num_features": 31
+    }
+  }
+}

@@ -1,0 +1,128 @@
+{
+  "WMT": {
+    "baseline": {
+      "accuracy": 0.3056379821958457,
+      "high_conf_accuracy": 0.4230769230769231,
+      "high_conf_ratio": 0.1543026706231454,
+      "train_samples": 1569,
+      "test_samples": 337,
+      "num_features": 31
+    },
+    "event_features": {
+      "accuracy": 0.2551928783382789,
+      "high_conf_accuracy": 0.0,
+      "high_conf_ratio": 0.0,
+      "train_samples": 1569,
+      "test_samples": 337,
+      "num_features": 31
+    },
+    "curriculum": {
+      "accuracy": 0.228486646884273,
+      "high_conf_accuracy": 0.5,
+      "high_conf_ratio": 0.005934718100890208,
+      "train_samples": 1569,
+      "test_samples": 337,
+      "num_features": 31
+    },
+    "attention": {
+      "accuracy": 0.41543026706231456,
+      "high_conf_accuracy": 0.6666666666666666,
+      "high_conf_ratio": 0.008902077151335312,
+      "train_samples": 1569,
+      "test_samples": 337,
+      "num_features": 31
+    },
+    "combined": {
+      "accuracy": 0.3086053412462908,
+      "high_conf_accuracy": 0.5625,
+      "high_conf_ratio": 0.04747774480712166,
+      "train_samples": 1569,
+      "test_samples": 337,
+      "num_features": 31
+    }
+  },
+  "DIS": {
+    "baseline": {
+      "accuracy": 0.3026706231454006,
+      "high_conf_accuracy": 0.3076923076923077,
+      "high_conf_ratio": 0.4629080118694362,
+      "train_samples": 1569,
+      "test_samples": 337,
+      "num_features": 31
+    },
+    "event_features": {
+      "accuracy": 0.35311572700296734,
+      "high_conf_accuracy": 0.3409090909090909,
+      "high_conf_ratio": 0.26112759643916916,
+      "train_samples": 1569,
+      "test_samples": 337,
+      "num_features": 31
+    },
+    "curriculum": {
+      "accuracy": 0.3086053412462908,
+      "high_conf_accuracy": 0.30660377358490565,
+      "high_conf_ratio": 0.629080118694362,
+      "train_samples": 1569,
+      "test_samples": 337,
+      "num_features": 31
+    },
+    "attention": {
+      "accuracy": 0.3026706231454006,
+      "high_conf_accuracy": 0.2909090909090909,
+      "high_conf_ratio": 0.1632047477744807,
+      "train_samples": 1569,
+      "test_samples": 337,
+      "num_features": 31
+    },
+    "combined": {
+      "accuracy": 0.3115727002967359,
+      "high_conf_accuracy": 0.3333333333333333,
+      "high_conf_ratio": 0.16023738872403562,
+      "train_samples": 1569,
+      "test_samples": 337,
+      "num_features": 31
+    }
+  },
+  "MSFT": {
+    "baseline": {
+      "accuracy": 0.3649851632047478,
+      "high_conf_accuracy": 0.4375,
+      "high_conf_ratio": 0.04747774480712166,
+      "train_samples": 1569,
+      "test_samples": 337,
+      "num_features": 31
+    },
+    "event_features": {
+      "accuracy": 0.28486646884273,
+      "high_conf_accuracy": 0.2857142857142857,
+      "high_conf_ratio": 0.14540059347181009,
+      "train_samples": 1569,
+      "test_samples": 337,
+      "num_features": 31
+    },
+    "curriculum": {
+      "accuracy": 0.3887240356083086,
+      "high_conf_accuracy": 0.28888888888888886,
+      "high_conf_ratio": 0.13353115727002968,
+      "train_samples": 1569,
+      "test_samples": 337,
+      "num_features": 31
+    },
+    "attention": {
+      "accuracy": 0.37388724035608306,
+      "high_conf_accuracy": 0.0,
+      "high_conf_ratio": 0.0,
+      "train_samples": 1569,
+      "test_samples": 337,
+      "num_features": 31
+    },
+    "combined": {
+      "accuracy": 0.3649851632047478,
+      "high_conf_accuracy": 0.0,
+      "high_conf_ratio": 0.0,
+      "train_samples": 1569,
+      "test_samples": 337,
+      "num_features": 31
+    }
+  }
+}
