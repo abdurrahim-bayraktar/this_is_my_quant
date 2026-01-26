@@ -40,8 +40,12 @@ class ComprehensiveIndicatorsV7:
             import pandas_ta as ta
             self.ta = ta
             self.ta_available = True
+            logger.info(f"pandas_ta version: {ta.version}")
         except ImportError:
             logger.warning("pandas_ta not installed. Run: pip install pandas_ta")
+            self.ta_available = False
+        except Exception as e:
+            logger.warning(f"pandas_ta import error: {e}")
             self.ta_available = False
     
     def compute_all(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -57,27 +61,42 @@ class ComprehensiveIndicatorsV7:
                 elif col.capitalize() in df.columns:
                     df[col] = df[col.capitalize()]
         
+        # Verify required columns exist
+        for col in required:
+            if col not in df.columns:
+                logger.error(f"Missing required column: {col}")
+                return df
+        
         if not self.ta_available:
             return self._compute_basic_indicators(df)
         
+        # Helper function to safely compute indicators
+        def safe_compute(name, func):
+            try:
+                result = func()
+                return result
+            except Exception as e:
+                logger.debug(f"Failed to compute {name}: {e}")
+                return None
+        
         # ===== MOVING AVERAGES =====
-        df['sma_5'] = self.ta.sma(df['Close'], length=5)
-        df['sma_10'] = self.ta.sma(df['Close'], length=10)
-        df['sma_20'] = self.ta.sma(df['Close'], length=20)
-        df['sma_50'] = self.ta.sma(df['Close'], length=50)
-        df['sma_200'] = self.ta.sma(df['Close'], length=200)  # New for golden/death cross
+        df['sma_5'] = safe_compute('sma_5', lambda: self.ta.sma(df['Close'], length=5))
+        df['sma_10'] = safe_compute('sma_10', lambda: self.ta.sma(df['Close'], length=10))
+        df['sma_20'] = safe_compute('sma_20', lambda: self.ta.sma(df['Close'], length=20))
+        df['sma_50'] = safe_compute('sma_50', lambda: self.ta.sma(df['Close'], length=50))
+        df['sma_200'] = safe_compute('sma_200', lambda: self.ta.sma(df['Close'], length=200))
         
-        df['ema_5'] = self.ta.ema(df['Close'], length=5)
-        df['ema_12'] = self.ta.ema(df['Close'], length=12)
-        df['ema_26'] = self.ta.ema(df['Close'], length=26)
+        df['ema_5'] = safe_compute('ema_5', lambda: self.ta.ema(df['Close'], length=5))
+        df['ema_12'] = safe_compute('ema_12', lambda: self.ta.ema(df['Close'], length=12))
+        df['ema_26'] = safe_compute('ema_26', lambda: self.ta.ema(df['Close'], length=26))
         
-        df['vwma_20'] = self.ta.vwma(df['Close'], df['Volume'], length=20)
-        df['kama'] = self.ta.kama(df['Close'], length=10)
+        df['vwma_20'] = safe_compute('vwma_20', lambda: self.ta.vwma(df['Close'], df['Volume'], length=20))
+        df['kama'] = safe_compute('kama', lambda: self.ta.kama(df['Close'], length=10))
         
-        # New moving averages
-        df['wma_20'] = self.ta.wma(df['Close'], length=20)
-        df['hma_20'] = self.ta.hma(df['Close'], length=20)
-        df['dema_20'] = self.ta.dema(df['Close'], length=20)
+        # New moving averages (may not be available in all versions)
+        df['wma_20'] = safe_compute('wma_20', lambda: self.ta.wma(df['Close'], length=20))
+        df['hma_20'] = safe_compute('hma_20', lambda: self.ta.hma(df['Close'], length=20))
+        df['dema_20'] = safe_compute('dema_20', lambda: self.ta.dema(df['Close'], length=20))
         
         zlma = self.ta.zlma(df['Close'], length=20)
         if zlma is not None:

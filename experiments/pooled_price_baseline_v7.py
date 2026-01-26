@@ -288,8 +288,24 @@ class PooledExperimentV7:
         return stock_data
     
     def prepare_stock_data(self, df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray, List[str]]:
+        # Compute indicators
         df = self.indicator_computer.compute_all(df)
+        
+        # Get feature columns and filter out any invalid ones
         feature_cols = self.indicator_computer.get_indicator_columns(df)
+        
+        # Remove columns that are all NaN or don't exist
+        valid_cols = []
+        for col in feature_cols:
+            if col in df.columns:
+                # Check if column has at least some valid data
+                if df[col].notna().sum() > 10:
+                    valid_cols.append(col)
+        feature_cols = valid_cols
+        
+        if len(feature_cols) < 5:
+            logger.debug(f"Too few valid features: {len(feature_cols)}")
+            return np.array([]), np.array([]), []
         
         df['return_next'] = df['Close'].pct_change().shift(-1)
         df['trend'] = pd.cut(
@@ -298,12 +314,16 @@ class PooledExperimentV7:
             labels=[0, 1, 2]
         ).astype(float)
         
-        df = df.dropna()
+        df = df.dropna(subset=['trend'] + feature_cols[:10])  # Only require core features
         if len(df) < self.sequence_length + 10:
             return np.array([]), np.array([]), []
         
+        # Scale features
         scaler = StandardScaler()
         feature_data = df[feature_cols].values
+        
+        # Replace infinite values before scaling
+        feature_data = np.nan_to_num(feature_data, nan=0.0, posinf=0.0, neginf=0.0)
         feature_data = scaler.fit_transform(feature_data)
         feature_data = np.nan_to_num(feature_data, nan=0.0, posinf=0.0, neginf=0.0)
         
@@ -318,18 +338,37 @@ class PooledExperimentV7:
     def prepare_pooled_data(self, stock_data: Dict[str, pd.DataFrame]) -> Tuple[np.ndarray, np.ndarray, List[str]]:
         all_X, all_y = [], []
         feature_cols = None
+        failed_stocks = []
+        success_count = 0
         
         for ticker, df in tqdm(stock_data.items(), desc="Preparing V7 features"):
             try:
                 X, y, cols = self.prepare_stock_data(df)
                 if len(X) == 0:
+                    failed_stocks.append((ticker, "empty result"))
                     continue
                 all_X.append(X)
                 all_y.append(y)
+                success_count += 1
                 if feature_cols is None:
                     feature_cols = cols
-            except:
-                pass
+            except Exception as e:
+                failed_stocks.append((ticker, str(e)))
+                # Log first few failures with details
+                if len(failed_stocks) <= 3:
+                    logger.error(f"Failed to process {ticker}: {e}")
+        
+        logger.info(f"Successfully processed: {success_count}/{len(stock_data)} stocks")
+        if failed_stocks:
+            logger.warning(f"Failed stocks: {len(failed_stocks)}")
+            # Show first 5 failures
+            for ticker, reason in failed_stocks[:5]:
+                logger.warning(f"  {ticker}: {reason}")
+        
+        if len(all_X) == 0:
+            logger.error("No stocks were successfully processed!")
+            logger.error("Check that pandas_ta is installed: pip install pandas_ta")
+            raise ValueError("No data available - all stocks failed during feature preparation")
         
         X_pooled = np.concatenate(all_X, axis=0)
         y_pooled = np.concatenate(all_y, axis=0)
