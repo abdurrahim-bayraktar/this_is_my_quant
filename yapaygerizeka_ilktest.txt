@@ -1,0 +1,300 @@
+PS C:\dev\this_is_my_quant> python experiments/ablation_sentiment.py --scenarios all --stocks 50 --epochs 50
+2026-01-21 12:54:43,029 - INFO - Running ablation study with 4 scenarios
+2026-01-21 12:54:43,030 - INFO - Tickers: 50, Epochs: 50
+2026-01-21 12:54:43,030 - INFO - Loading price data from Yahoo Finance...
+2026-01-21 12:54:43,148 - INFO - Loading cached price data from C:\dev\this_is_my_quant\data\cache\prices_50stocks_2016-01-01_2024-12-31.parquet
+C:\dev\this_is_my_quant\src\data\feature_engineering.py:69: FutureWarning: DataFrame.fillna with 'method' is deprecated and will raise in a future version. Use obj.ffill() or obj.bfill() instead.   
+  result[indicator_cols] = result[indicator_cols].fillna(method="bfill")
+2026-01-21 12:54:44,573 - INFO - Added 16 technical indicators
+2026-01-21 12:54:44,621 - INFO - Computed returns for 50 stocks
+2026-01-21 12:54:44,642 - INFO - Trend distribution: {'Up': 0.36945181255526083, 'Down': 0.3170203359858532, 'Neutral': 0.31352785145888595}
+2026-01-21 12:54:44,643 - INFO -
+============================================================
+2026-01-21 12:54:44,644 - INFO - Running Scenario: No Sentiment (Price Only)
+2026-01-21 12:54:44,644 - INFO - Description: Baseline using only price and technical indicators   
+2026-01-21 12:54:44,644 - INFO - ============================================================      
+2026-01-21 12:54:44,872 - INFO - Created 112100 sequences of length 20
+2026-01-21 12:54:44,943 - INFO - Prepared data: X.shape=(112100, 20, 22), features=22
+2026-01-21 12:54:44,944 - INFO - Training model for No Sentiment (Price Only)...
+2026-01-21 12:54:44,955 - INFO - BaselineLSTM initialized: input=22, hidden=128, layers=2, bidirectional=False
+2026-01-21 12:54:44,955 - INFO - CombinedLoss: trend_weight=1.0, confidence_weight=0.5, label_smoothing=0.1
+C:\dev\this_is_my_quant\src\training\trainer.py:85: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  self.scaler = GradScaler() if self.mixed_precision else None
+2026-01-21 12:54:45,577 - INFO - Trainer initialized on cuda
+2026-01-21 12:54:45,577 - INFO - Mixed precision: True
+2026-01-21 12:54:45,578 - INFO - Starting training for 50 epochs
+Epoch 1:   0%|                                                           | 0/2453 [00:00<?, ?it/s]C:\dev\this_is_my_quant\src\training\trainer.py:130: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with autocast():
+Epoch 1: 100%|███████████████████████████| 2453/2453 [00:18<00:00, 135.43it/s, loss=1.42, acc=0.5]
+2026-01-21 12:55:04,589 - INFO - Epoch 1: train_loss=1.4215, val_loss=1.4157, val_acc=40.89%
+2026-01-21 12:55:04,598 - INFO - Saved checkpoint to C:\dev\this_is_my_quant\models\20260121_125445\best_model.pt
+Epoch 2: 100%|█████████████████████████| 2453/2453 [00:20<00:00, 120.67it/s, loss=1.51, acc=0.333] 
+2026-01-21 12:55:25,847 - INFO - Epoch 2: train_loss=1.4185, val_loss=1.4114, val_acc=40.76%
+2026-01-21 12:55:25,854 - INFO - Saved checkpoint to C:\dev\this_is_my_quant\models\20260121_125445\best_model.pt
+Epoch 3: 100%|█████████████████████████| 2453/2453 [00:20<00:00, 121.77it/s, loss=1.31, acc=0.667] 
+2026-01-21 12:55:46,940 - INFO - Epoch 3: train_loss=1.4163, val_loss=1.4116, val_acc=41.18%
+Epoch 4: 100%|█████████████████████████| 2453/2453 [00:20<00:00, 122.23it/s, loss=1.32, acc=0.333]
+2026-01-21 12:56:07,973 - INFO - Epoch 4: train_loss=1.4159, val_loss=1.4112, val_acc=40.80%
+2026-01-21 12:56:07,981 - INFO - Saved checkpoint to C:\dev\this_is_my_quant\models\20260121_125445\best_model.pt
+Epoch 5: 100%|██████████████████████████| 2453/2453 [00:20<00:00, 120.82it/s, loss=1.5, acc=0.667] 
+2026-01-21 12:56:29,397 - INFO - Epoch 5: train_loss=1.4150, val_loss=1.4127, val_acc=40.81%
+Epoch 6: 100%|█████████████████████████| 2453/2453 [00:20<00:00, 119.19it/s, loss=1.42, acc=0.333]
+2026-01-21 12:56:50,972 - INFO - Epoch 6: train_loss=1.4143, val_loss=1.4141, val_acc=41.33%
+Epoch 7: 100%|█████████████████████████| 2453/2453 [00:21<00:00, 115.64it/s, loss=1.53, acc=0.333]
+2026-01-21 12:57:13,159 - INFO - Epoch 7: train_loss=1.4132, val_loss=1.4125, val_acc=41.08%
+Epoch 8: 100%|███████████████████████████| 2453/2453 [00:21<00:00, 115.83it/s, loss=1.31, acc=0.5]
+2026-01-21 12:57:35,334 - INFO - Epoch 8: train_loss=1.4124, val_loss=1.4151, val_acc=40.62%
+Epoch 9: 100%|███████████████████████████| 2453/2453 [00:21<00:00, 113.72it/s, loss=1.46, acc=0.5]
+2026-01-21 12:57:57,976 - INFO - Epoch 9: train_loss=1.4115, val_loss=1.4153, val_acc=40.58%
+Epoch 10: 100%|██████████████████████████| 2453/2453 [00:22<00:00, 111.38it/s, loss=1.45, acc=0.5]
+2026-01-21 12:58:21,010 - INFO - Epoch 10: train_loss=1.4112, val_loss=1.4157, val_acc=40.76%
+Epoch 11: 100%|████████████████████████| 2453/2453 [00:21<00:00, 112.42it/s, loss=1.39, acc=0.667]
+2026-01-21 12:58:43,873 - INFO - Epoch 11: train_loss=1.4151, val_loss=1.4143, val_acc=40.86%
+Epoch 12: 100%|██████████████████████████| 2453/2453 [00:22<00:00, 111.47it/s, loss=1.44, acc=0.5]
+2026-01-21 12:59:06,926 - INFO - Epoch 12: train_loss=1.4145, val_loss=1.4129, val_acc=40.91%
+Epoch 13: 100%|████████████████████████| 2453/2453 [00:21<00:00, 111.95it/s, loss=1.42, acc=0.333]
+2026-01-21 12:59:29,855 - INFO - Epoch 13: train_loss=1.4146, val_loss=1.4169, val_acc=40.12%
+Epoch 14: 100%|█████████████████████████| 2453/2453 [00:25<00:00, 96.13it/s, loss=1.62, acc=0.333]
+2026-01-21 12:59:56,556 - INFO - Epoch 14: train_loss=1.4141, val_loss=1.4206, val_acc=40.91%
+2026-01-21 12:59:56,556 - INFO - Early stopping at epoch 14
+2026-01-21 12:59:56,566 - INFO - Saved checkpoint to C:\dev\this_is_my_quant\models\20260121_125445\final_model.pt
+2026-01-21 12:59:56,872 - INFO - 
+============================================================
+2026-01-21 12:59:56,872 - INFO - Running Scenario: Twitter Sentiment Only
+2026-01-21 12:59:56,872 - INFO - Description: Twitter Financial Sentiment dataset with ticker extraction
+2026-01-21 12:59:56,872 - INFO - ============================================================      
+2026-01-21 12:59:56,873 - INFO - Loading Twitter Financial Sentiment...
+2026-01-21 13:00:01,342 - INFO - Extracted 96 Twitter sentiment records for 26 tickers
+2026-01-21 13:00:01,670 - INFO - Created 112100 sequences of length 20
+2026-01-21 13:00:01,792 - INFO - Prepared data: X.shape=(112100, 20, 22), features=22
+2026-01-21 13:00:01,792 - INFO - Training model for Twitter Sentiment Only...
+2026-01-21 13:00:01,806 - INFO - BaselineLSTM initialized: input=22, hidden=128, layers=2, bidirectional=False
+2026-01-21 13:00:01,807 - INFO - CombinedLoss: trend_weight=1.0, confidence_weight=0.5, label_smoothing=0.1
+C:\dev\this_is_my_quant\src\training\trainer.py:85: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  self.scaler = GradScaler() if self.mixed_precision else None
+2026-01-21 13:00:01,811 - INFO - Trainer initialized on cuda
+2026-01-21 13:00:01,811 - INFO - Mixed precision: True
+2026-01-21 13:00:01,812 - INFO - Starting training for 50 epochs
+Epoch 1:   0%|                                                           | 0/2453 [00:00<?, ?it/s]C:\dev\this_is_my_quant\src\training\trainer.py:130: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with autocast():
+Epoch 1: 100%|██████████████████████████| 2453/2453 [00:28<00:00, 86.10it/s, loss=1.43, acc=0.333]
+2026-01-21 13:00:31,802 - INFO - Epoch 1: train_loss=1.4216, val_loss=1.4164, val_acc=40.68%
+2026-01-21 13:00:31,817 - INFO - Saved checkpoint to C:\dev\this_is_my_quant\models\20260121_130001\best_model.pt
+Epoch 2: 100%|████████████████████████████| 2453/2453 [00:29<00:00, 82.04it/s, loss=1.37, acc=0.5]
+2026-01-21 13:01:03,112 - INFO - Epoch 2: train_loss=1.4180, val_loss=1.4127, val_acc=41.08%
+2026-01-21 13:01:03,124 - INFO - Saved checkpoint to C:\dev\this_is_my_quant\models\20260121_130001\best_model.pt
+Epoch 3: 100%|██████████████████████████| 2453/2453 [00:30<00:00, 80.06it/s, loss=1.34, acc=0.167] 
+2026-01-21 13:01:35,205 - INFO - Epoch 3: train_loss=1.4167, val_loss=1.4124, val_acc=41.22%
+2026-01-21 13:01:35,215 - INFO - Saved checkpoint to C:\dev\this_is_my_quant\models\20260121_130001\best_model.pt
+Epoch 4: 100%|██████████████████████████| 2453/2453 [00:29<00:00, 82.11it/s, loss=1.39, acc=0.167] 
+2026-01-21 13:02:06,431 - INFO - Epoch 4: train_loss=1.4162, val_loss=1.4120, val_acc=40.94%
+2026-01-21 13:02:06,441 - INFO - Saved checkpoint to C:\dev\this_is_my_quant\models\20260121_130001\best_model.pt
+Epoch 5: 100%|█████████████████████████████| 2453/2453 [00:27<00:00, 89.15it/s, loss=1.5, acc=0.5] 
+2026-01-21 13:02:35,167 - INFO - Epoch 5: train_loss=1.4148, val_loss=1.4118, val_acc=40.89%
+2026-01-21 13:02:35,176 - INFO - Saved checkpoint to C:\dev\this_is_my_quant\models\20260121_130001\best_model.pt
+Epoch 6: 100%|██████████████████████████| 2453/2453 [00:27<00:00, 88.88it/s, loss=1.47, acc=0.333] 
+2026-01-21 13:03:03,938 - INFO - Epoch 6: train_loss=1.4137, val_loss=1.4128, val_acc=41.12%
+Epoch 7: 100%|██████████████████████████| 2453/2453 [00:26<00:00, 93.75it/s, loss=1.42, acc=0.333]
+2026-01-21 13:03:31,208 - INFO - Epoch 7: train_loss=1.4131, val_loss=1.4142, val_acc=40.86%
+Epoch 8: 100%|███████████████████████████| 2453/2453 [00:23<00:00, 106.05it/s, loss=1.32, acc=0.5]
+2026-01-21 13:03:55,420 - INFO - Epoch 8: train_loss=1.4123, val_loss=1.4147, val_acc=41.19%
+Epoch 9: 100%|█████████████████████████| 2453/2453 [00:23<00:00, 103.50it/s, loss=1.52, acc=0.833]
+2026-01-21 13:04:20,139 - INFO - Epoch 9: train_loss=1.4116, val_loss=1.4157, val_acc=41.56%
+Epoch 10: 100%|████████████████████████| 2453/2453 [00:23<00:00, 105.13it/s, loss=1.42, acc=0.333]
+2026-01-21 13:04:44,621 - INFO - Epoch 10: train_loss=1.4110, val_loss=1.4149, val_acc=41.31%
+Epoch 11: 100%|████████████████████████| 2453/2453 [00:23<00:00, 103.28it/s, loss=1.41, acc=0.333]
+2026-01-21 13:05:09,519 - INFO - Epoch 11: train_loss=1.4148, val_loss=1.4136, val_acc=41.12%
+Epoch 12: 100%|██████████████████████████| 2453/2453 [00:23<00:00, 106.59it/s, loss=1.45, acc=0.5]
+2026-01-21 13:05:33,623 - INFO - Epoch 12: train_loss=1.4147, val_loss=1.4136, val_acc=40.24%
+Epoch 13: 100%|████████████████████████| 2453/2453 [00:23<00:00, 105.42it/s, loss=1.38, acc=0.333]
+2026-01-21 13:05:57,997 - INFO - Epoch 13: train_loss=1.4144, val_loss=1.4171, val_acc=40.46%
+Epoch 14: 100%|████████████████████████| 2453/2453 [00:23<00:00, 102.95it/s, loss=1.42, acc=0.667]
+2026-01-21 13:06:22,871 - INFO - Epoch 14: train_loss=1.4141, val_loss=1.4135, val_acc=40.38%
+Epoch 15: 100%|███████████████████████████| 2453/2453 [00:23<00:00, 103.75it/s, loss=1.4, acc=0.5]
+2026-01-21 13:06:47,624 - INFO - Epoch 15: train_loss=1.4135, val_loss=1.4130, val_acc=40.33%
+2026-01-21 13:06:47,625 - INFO - Early stopping at epoch 15
+2026-01-21 13:06:47,633 - INFO - Saved checkpoint to C:\dev\this_is_my_quant\models\20260121_130001\final_model.pt
+2026-01-21 13:06:47,843 - INFO - 
+============================================================
+2026-01-21 13:06:47,843 - INFO - Running Scenario: News Sentiment Only (FNSPID)
+2026-01-21 13:06:47,843 - INFO - Description: FNSPID financial news sentiment
+2026-01-21 13:06:47,843 - INFO - ============================================================      
+2026-01-21 13:06:47,844 - INFO - Loading FNSPID news sentiment (this may take a while)...
+Repo card metadata block was not found. Setting CardData to empty.
+2026-01-21 13:06:50,975 - WARNING - Repo card metadata block was not found. Setting CardData to empty.
+Xet Storage is enabled for this repo, but the 'hf_xet' package is not installed. Falling back to regular HTTP download. For better performance, install the package with: `pip install huggingface_hub[hf_xet]` or `pip install hf_xet`
+2026-01-21 13:06:55,024 - WARNING - Xet Storage is enabled for this repo, but the 'hf_xet' package is not installed. Falling back to regular HTTP download. For better performance, install the package with: `pip install huggingface_hub[hf_xet]` or `pip install hf_xet`
+All_external.csv: 100%|██████████████████████████████████████| 5.73G/5.73G [08:28<00:00, 8.60MB/s]
+C:\Users\abdurrahim\AppData\Local\Programs\Python\Python313\Lib\site-packages\huggingface_hub\file_download.py:143: UserWarning: `huggingface_hub` cache-system uses symlinks by default to efficiently store duplicated files but your machine does not support them in C:\Users\abdurrahim\.cache\huggingface\hub\datasets--Zihan1004--FNSPID. Caching files will still work but in a degraded version that might require more space on your disk. This warning can be disabled by setting the `HF_HUB_DISABLE_SYMLINKS_WARNING` environment variable. For more details, see https://huggingface.co/docs/huggingface_hub/how-to-cache#limitations.
+To support symlinks on Windows, you either need to activate Developer Mode or to run Python as an administrator. In order to activate developer mode, see this article: https://docs.microsoft.com/en-us/windows/apps/get-started/enable-your-device-for-development
+  warnings.warn(message)
+Xet Storage is enabled for this repo, but the 'hf_xet' package is not installed. Falling back to regular HTTP download. For better performance, install the package with: `pip install huggingface_hub[hf_xet]` or `pip install hf_xet`
+2026-01-21 13:15:25,254 - WARNING - Xet Storage is enabled for this repo, but the 'hf_xet' package is not installed. Falling back to regular HTTP download. For better performance, install the package with: `pip install huggingface_hub[hf_xet]` or `pip install hf_xet`
+nasdaq_exteral_data.csv: 100%|███████████████████████████████| 23.2G/23.2G [40:55<00:00, 9.46MB/s]
+Xet Storage is enabled for this repo, but the 'hf_xet' package is not installed. Falling back to regular HTTP download. For better performance, install the package with: `pip install huggingface_hub[hf_xet]` or `pip install hf_xet`
+2026-01-21 13:56:21,492 - WARNING - Xet Storage is enabled for this repo, but the 'hf_xet' package is not installed. Falling back to regular HTTP download. For better performance, install the package with: `pip install huggingface_hub[hf_xet]` or `pip install hf_xet`
+full_history.zip: 100%|████████████████████████████████████████| 590M/590M [01:04<00:00, 9.07MB/s]
+Generating train split: 1400000 examples [00:06, 232578.75 examples/s]
+2026-01-21 13:57:32,973 - WARNING - Could not load FNSPID: An error occurred while generating the dataset
+2026-01-21 13:57:33,312 - INFO - Created 112100 sequences of length 20
+2026-01-21 13:57:33,429 - INFO - Prepared data: X.shape=(112100, 20, 22), features=22
+2026-01-21 13:57:33,430 - INFO - Training model for News Sentiment Only (FNSPID)...
+2026-01-21 13:57:33,441 - INFO - BaselineLSTM initialized: input=22, hidden=128, layers=2, bidirectional=False
+2026-01-21 13:57:33,442 - INFO - CombinedLoss: trend_weight=1.0, confidence_weight=0.5, label_smoothing=0.1
+C:\dev\this_is_my_quant\src\training\trainer.py:85: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  self.scaler = GradScaler() if self.mixed_precision else None
+2026-01-21 13:57:33,447 - INFO - Trainer initialized on cuda
+2026-01-21 13:57:33,447 - INFO - Mixed precision: True
+2026-01-21 13:57:33,448 - INFO - Starting training for 50 epochs
+Epoch 1:   0%|                                                           | 0/2453 [00:00<?, ?it/s]C:\dev\this_is_my_quant\src\training\trainer.py:130: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with autocast():
+Epoch 1: 100%|██████████████████████████| 2453/2453 [00:26<00:00, 90.92it/s, loss=1.35, acc=0.333]
+2026-01-21 13:58:01,617 - INFO - Epoch 1: train_loss=1.4211, val_loss=1.4147, val_acc=41.03%
+2026-01-21 13:58:01,627 - INFO - Saved checkpoint to C:\dev\this_is_my_quant\models\20260121_135733\best_model.pt
+Epoch 2: 100%|████████████████████████████| 2453/2453 [00:26<00:00, 91.41it/s, loss=1.52, acc=0.5] 
+2026-01-21 13:58:29,613 - INFO - Epoch 2: train_loss=1.4180, val_loss=1.4139, val_acc=41.28%
+2026-01-21 13:58:29,622 - INFO - Saved checkpoint to C:\dev\this_is_my_quant\models\20260121_135733\best_model.pt
+Epoch 3: 100%|██████████████████████████| 2453/2453 [00:25<00:00, 95.88it/s, loss=1.45, acc=0.333] 
+2026-01-21 13:58:56,354 - INFO - Epoch 3: train_loss=1.4168, val_loss=1.4108, val_acc=41.23%
+2026-01-21 13:58:56,363 - INFO - Saved checkpoint to C:\dev\this_is_my_quant\models\20260121_135733\best_model.pt
+Epoch 4: 100%|██████████████████████████| 2453/2453 [00:25<00:00, 94.40it/s, loss=1.35, acc=0.333] 
+2026-01-21 13:59:23,483 - INFO - Epoch 4: train_loss=1.4163, val_loss=1.4166, val_acc=41.25%
+Epoch 5: 100%|████████████████████████████| 2453/2453 [00:26<00:00, 93.70it/s, loss=1.41, acc=0.5]
+2026-01-21 13:59:50,769 - INFO - Epoch 5: train_loss=1.4149, val_loss=1.4130, val_acc=41.43%
+Epoch 6: 100%|████████████████████████████| 2453/2453 [00:26<00:00, 92.46it/s, loss=1.31, acc=0.5]
+2026-01-21 14:00:18,478 - INFO - Epoch 6: train_loss=1.4144, val_loss=1.4147, val_acc=40.95%
+Epoch 7: 100%|████████████████████████████| 2453/2453 [00:26<00:00, 93.14it/s, loss=1.44, acc=0.5]
+2026-01-21 14:00:45,977 - INFO - Epoch 7: train_loss=1.4129, val_loss=1.4135, val_acc=41.18%
+Epoch 8: 100%|██████████████████████████| 2453/2453 [00:26<00:00, 92.68it/s, loss=1.34, acc=0.333]
+2026-01-21 14:01:13,581 - INFO - Epoch 8: train_loss=1.4123, val_loss=1.4137, val_acc=41.28%
+Epoch 9: 100%|██████████████████████████| 2453/2453 [00:26<00:00, 94.25it/s, loss=1.36, acc=0.667]
+2026-01-21 14:01:40,748 - INFO - Epoch 9: train_loss=1.4114, val_loss=1.4130, val_acc=41.42%
+Epoch 10: 100%|█████████████████████████| 2453/2453 [00:27<00:00, 89.41it/s, loss=1.35, acc=0.333]
+2026-01-21 14:02:09,308 - INFO - Epoch 10: train_loss=1.4117, val_loss=1.4128, val_acc=41.34%
+Epoch 11: 100%|███████████████████████████| 2453/2453 [00:26<00:00, 92.79it/s, loss=1.48, acc=0.5]
+2026-01-21 14:02:36,992 - INFO - Epoch 11: train_loss=1.4145, val_loss=1.4132, val_acc=40.59%
+Epoch 12: 100%|█████████████████████████| 2453/2453 [00:26<00:00, 92.58it/s, loss=1.42, acc=0.167]
+2026-01-21 14:03:04,629 - INFO - Epoch 12: train_loss=1.4152, val_loss=1.4154, val_acc=41.02%
+Epoch 13: 100%|███████████████████████████| 2453/2453 [00:26<00:00, 92.55it/s, loss=1.27, acc=0.5]
+2026-01-21 14:03:32,268 - INFO - Epoch 13: train_loss=1.4144, val_loss=1.4149, val_acc=40.83%
+2026-01-21 14:03:32,269 - INFO - Early stopping at epoch 13
+2026-01-21 14:03:32,277 - INFO - Saved checkpoint to C:\dev\this_is_my_quant\models\20260121_135733\final_model.pt
+2026-01-21 14:03:32,493 - INFO - 
+============================================================
+2026-01-21 14:03:32,494 - INFO - Running Scenario: Combined (Twitter + News)
+2026-01-21 14:03:32,494 - INFO - Description: Both Twitter and FNSPID news sentiment
+2026-01-21 14:03:32,494 - INFO - ============================================================      
+2026-01-21 14:03:32,494 - INFO - Loading Twitter Financial Sentiment...
+2026-01-21 14:03:35,723 - INFO - Extracted 96 Twitter sentiment records for 26 tickers
+2026-01-21 14:03:35,723 - INFO - Loading FNSPID news sentiment (this may take a while)...
+Repo card metadata block was not found. Setting CardData to empty.
+2026-01-21 14:03:36,701 - WARNING - Repo card metadata block was not found. Setting CardData to empty.
+Generating train split: 1400000 examples [00:05, 240536.86 examples/s]
+2026-01-21 14:03:43,599 - WARNING - Could not load FNSPID: An error occurred while generating the dataset
+2026-01-21 14:03:43,933 - INFO - Created 112100 sequences of length 20
+2026-01-21 14:03:44,064 - INFO - Prepared data: X.shape=(112100, 20, 22), features=22
+2026-01-21 14:03:44,064 - INFO - Training model for Combined (Twitter + News)...
+2026-01-21 14:03:44,076 - INFO - BaselineLSTM initialized: input=22, hidden=128, layers=2, bidirectional=False
+2026-01-21 14:03:44,077 - INFO - CombinedLoss: trend_weight=1.0, confidence_weight=0.5, label_smoothing=0.1
+C:\dev\this_is_my_quant\src\training\trainer.py:85: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  self.scaler = GradScaler() if self.mixed_precision else None
+2026-01-21 14:03:44,083 - INFO - Trainer initialized on cuda
+2026-01-21 14:03:44,084 - INFO - Mixed precision: True
+2026-01-21 14:03:44,084 - INFO - Starting training for 50 epochs
+Epoch 1:   0%|                                                           | 0/2453 [00:00<?, ?it/s]C:\dev\this_is_my_quant\src\training\trainer.py:130: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with autocast():
+Epoch 1: 100%|██████████████████████████| 2453/2453 [00:27<00:00, 90.49it/s, loss=1.39, acc=0.167]
+2026-01-21 14:04:12,350 - INFO - Epoch 1: train_loss=1.4221, val_loss=1.4135, val_acc=39.92%
+2026-01-21 14:04:12,358 - INFO - Saved checkpoint to C:\dev\this_is_my_quant\models\20260121_140344\best_model.pt
+Epoch 2: 100%|██████████████████████████| 2453/2453 [00:26<00:00, 91.71it/s, loss=1.36, acc=0.333] 
+2026-01-21 14:04:40,286 - INFO - Epoch 2: train_loss=1.4185, val_loss=1.4137, val_acc=39.98%
+Epoch 3: 100%|████████████████████████████| 2453/2453 [00:27<00:00, 90.26it/s, loss=1.43, acc=0.5]
+2026-01-21 14:05:08,595 - INFO - Epoch 3: train_loss=1.4176, val_loss=1.4130, val_acc=40.26%
+2026-01-21 14:05:08,604 - INFO - Saved checkpoint to C:\dev\this_is_my_quant\models\20260121_140344\best_model.pt
+Epoch 4: 100%|████████████████████████████| 2453/2453 [00:26<00:00, 92.69it/s, loss=1.53, acc=0.5] 
+2026-01-21 14:05:36,219 - INFO - Epoch 4: train_loss=1.4165, val_loss=1.4127, val_acc=41.03%
+2026-01-21 14:05:36,229 - INFO - Saved checkpoint to C:\dev\this_is_my_quant\models\20260121_140344\best_model.pt
+Epoch 5: 100%|████████████████████████████| 2453/2453 [00:27<00:00, 90.30it/s, loss=1.48, acc=0.5] 
+2026-01-21 14:06:04,525 - INFO - Epoch 5: train_loss=1.4148, val_loss=1.4117, val_acc=41.20%
+2026-01-21 14:06:04,534 - INFO - Saved checkpoint to C:\dev\this_is_my_quant\models\20260121_140344\best_model.pt
+Epoch 6: 100%|████████████████████████████| 2453/2453 [00:24<00:00, 99.52it/s, loss=1.41, acc=0.5] 
+2026-01-21 14:06:30,232 - INFO - Epoch 6: train_loss=1.4145, val_loss=1.4102, val_acc=41.06%
+2026-01-21 14:06:30,244 - INFO - Saved checkpoint to C:\dev\this_is_my_quant\models\20260121_140344\best_model.pt
+Epoch 7: 100%|█████████████████████████| 2453/2453 [00:22<00:00, 108.85it/s, loss=1.34, acc=0.833] 
+2026-01-21 14:06:53,858 - INFO - Epoch 7: train_loss=1.4131, val_loss=1.4119, val_acc=40.93%
+Epoch 8: 100%|██████████████████████████| 2453/2453 [00:22<00:00, 108.33it/s, loss=1.4, acc=0.667]
+2026-01-21 14:07:17,538 - INFO - Epoch 8: train_loss=1.4124, val_loss=1.4114, val_acc=41.22%
+Epoch 9: 100%|█████████████████████████| 2453/2453 [00:22<00:00, 107.38it/s, loss=1.34, acc=0.333]
+2026-01-21 14:07:41,458 - INFO - Epoch 9: train_loss=1.4113, val_loss=1.4113, val_acc=41.30%
+Epoch 10: 100%|████████████████████████| 2453/2453 [00:23<00:00, 105.30it/s, loss=1.58, acc=0.333]
+2026-01-21 14:08:05,924 - INFO - Epoch 10: train_loss=1.4108, val_loss=1.4111, val_acc=41.34%
+Epoch 11: 100%|█████████████████████████| 2453/2453 [00:23<00:00, 106.25it/s, loss=1.4, acc=0.333]
+2026-01-21 14:08:30,081 - INFO - Epoch 11: train_loss=1.4149, val_loss=1.4115, val_acc=41.21%
+Epoch 12: 100%|██████████████████████████| 2453/2453 [00:23<00:00, 106.43it/s, loss=1.43, acc=0.5]
+2026-01-21 14:08:54,193 - INFO - Epoch 12: train_loss=1.4146, val_loss=1.4132, val_acc=40.45%
+Epoch 13: 100%|█████████████████████████| 2453/2453 [00:23<00:00, 106.27it/s, loss=1.3, acc=0.667]
+2026-01-21 14:09:18,368 - INFO - Epoch 13: train_loss=1.4142, val_loss=1.4123, val_acc=41.28%
+Epoch 14: 100%|████████████████████████| 2453/2453 [00:23<00:00, 106.10it/s, loss=1.31, acc=0.667]
+2026-01-21 14:09:42,566 - INFO - Epoch 14: train_loss=1.4134, val_loss=1.4154, val_acc=41.17%
+Epoch 15: 100%|████████████████████████| 2453/2453 [00:24<00:00, 102.01it/s, loss=1.42, acc=0.333]
+2026-01-21 14:10:07,686 - INFO - Epoch 15: train_loss=1.4134, val_loss=1.4110, val_acc=40.61%
+Epoch 16: 100%|████████████████████████| 2453/2453 [00:24<00:00, 101.33it/s, loss=1.34, acc=0.667]
+2026-01-21 14:10:32,999 - INFO - Epoch 16: train_loss=1.4126, val_loss=1.4128, val_acc=40.08%
+2026-01-21 14:10:32,999 - INFO - Early stopping at epoch 16
+2026-01-21 14:10:33,008 - INFO - Saved checkpoint to C:\dev\this_is_my_quant\models\20260121_140344\final_model.pt
+2026-01-21 14:10:33,223 - INFO - Results saved to C:\dev\this_is_my_quant\reports\ablation_20260121_125443\ablation_results.csv
+
+================================================================================
+ABLATION STUDY RESULTS: Sentiment Data Source Comparison
+================================================================================
+                    scenario accuracy high_confidence_accuracy high_confidence_ratio
+   No Sentiment (Price Only)   40.14%                   50.33%                 2.74%
+      Twitter Sentiment Only   39.68%                   38.71%                 0.18%
+News Sentiment Only (FNSPID)   39.89%                   50.45%                 3.93%
+   Combined (Twitter + News)   40.24%                   51.52%                 1.95%
+
+--------------------------------------------------------------------------------
+   No Sentiment (Price Only)   40.14%                   50.33%                 2.74%
+      Twitter Sentiment Only   39.68%                   38.71%                 0.18%
+News Sentiment Only (FNSPID)   39.89%                   50.45%                 3.93%
+   Combined (Twitter + News)   40.24%                   51.52%                 1.95%
+
+--------------------------------------------------------------------------------
+INTERPRETATION:
+      Twitter Sentiment Only   39.68%                   38.71%                 0.18%
+News Sentiment Only (FNSPID)   39.89%                   50.45%                 3.93%
+   Combined (Twitter + News)   40.24%                   51.52%                 1.95%
+
+--------------------------------------------------------------------------------
+INTERPRETATION:
+News Sentiment Only (FNSPID)   39.89%                   50.45%                 3.93%
+   Combined (Twitter + News)   40.24%                   51.52%                 1.95%
+
+--------------------------------------------------------------------------------
+INTERPRETATION:
+   Combined (Twitter + News)   40.24%                   51.52%                 1.95%
+
+--------------------------------------------------------------------------------
+INTERPRETATION:
+
+--------------------------------------------------------------------------------
+INTERPRETATION:
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+INTERPRETATION:
+--------------------------------------------------------------------------------
+✓ Best performing: Combined (Twitter + News) (40.24%)
+INTERPRETATION:
+--------------------------------------------------------------------------------
+✓ Best performing: Combined (Twitter + News) (40.24%)
+✗ Worst performing: Twitter Sentiment Only (39.68%)
+--------------------------------------------------------------------------------
+✓ Best performing: Combined (Twitter + News) (40.24%)
+✗ Worst performing: Twitter Sentiment Only (39.68%)
+↑ Improvement over baseline: 0.11%
+✓ Best performing: Combined (Twitter + News) (40.24%)
+✗ Worst performing: Twitter Sentiment Only (39.68%)
+↑ Improvement over baseline: 0.11%
+✗ Worst performing: Twitter Sentiment Only (39.68%)
+↑ Improvement over baseline: 0.11%
+↑ Improvement over baseline: 0.11%

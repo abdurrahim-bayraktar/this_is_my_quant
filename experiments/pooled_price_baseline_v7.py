@@ -193,6 +193,50 @@ class PriceCache:
             logger.info(f"Cache exists, skipping write: {cache_path}")
 
 
+class FeatureCache:
+    """
+    Cache for computed features (X, y arrays).
+    Saves computed features to disk to avoid recomputation and reduce memory.
+    """
+    
+    def __init__(self, cache_dir: Path = None):
+        if RUNNING_LOCAL:
+            self.cache_dir = cache_dir or DATA_DIR / "feature_cache"
+        else:
+            self.cache_dir = cache_dir or Path("/content/data/feature_cache")
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+    
+    def get_cache_path(self, n_stocks: int, start_date: str, end_date: str, version: str = "v7") -> Path:
+        return self.cache_dir / f"features_{version}_{n_stocks}stocks_{start_date}_{end_date}.npz"
+    
+    def exists(self, n_stocks: int, start_date: str, end_date: str, version: str = "v7") -> bool:
+        return self.get_cache_path(n_stocks, start_date, end_date, version).exists()
+    
+    def load(self, n_stocks: int, start_date: str, end_date: str, version: str = "v7") -> Tuple[np.ndarray, np.ndarray, List[str]]:
+        cache_path = self.get_cache_path(n_stocks, start_date, end_date, version)
+        if cache_path.exists():
+            logger.info(f"Loading cached features from {cache_path}")
+            data = np.load(cache_path, allow_pickle=True)
+            X = data['X']
+            y = data['y']
+            feature_cols = data['feature_cols'].tolist()
+            logger.info(f"Loaded features: {X.shape[0]:,} samples, {len(feature_cols)} features")
+            return X, y, feature_cols
+        return None, None, None
+    
+    def save(self, X: np.ndarray, y: np.ndarray, feature_cols: List[str], 
+             n_stocks: int, start_date: str, end_date: str, version: str = "v7"):
+        cache_path = self.get_cache_path(n_stocks, start_date, end_date, version)
+        logger.info(f"Saving features to cache: {cache_path}")
+        np.savez_compressed(
+            cache_path,
+            X=X,
+            y=y,
+            feature_cols=np.array(feature_cols, dtype=object)
+        )
+        logger.info(f"Saved {X.shape[0]:,} samples to {cache_path}")
+
+
 class PooledExperimentV7:
     """V7: Domain knowledge features + more stocks."""
     
@@ -230,6 +274,7 @@ class PooledExperimentV7:
         
         self.indicator_computer = ComprehensiveIndicatorsV7()
         self.price_cache = PriceCache()
+        self.feature_cache = FeatureCache()
         
     def load_all_stocks(self) -> Dict[str, pd.DataFrame]:
         """Load stocks: use cache + download only missing stocks."""
@@ -336,32 +381,56 @@ class PooledExperimentV7:
         return np.array(X, dtype=np.float32), np.array(y, dtype=np.int64), feature_cols
     
     def prepare_pooled_data(self, stock_data: Dict[str, pd.DataFrame]) -> Tuple[np.ndarray, np.ndarray, List[str]]:
+        """
+        Process stocks in batches to avoid OOM on limited memory systems.
+        Processes 50 stocks at a time, concatenates, then garbage collects.
+        """
+        import gc
+        
         all_X, all_y = [], []
         feature_cols = None
         failed_stocks = []
         success_count = 0
         
-        for ticker, df in tqdm(stock_data.items(), desc="Preparing V7 features"):
-            try:
-                X, y, cols = self.prepare_stock_data(df)
-                if len(X) == 0:
-                    failed_stocks.append((ticker, "empty result"))
-                    continue
-                all_X.append(X)
-                all_y.append(y)
-                success_count += 1
-                if feature_cols is None:
-                    feature_cols = cols
-            except Exception as e:
-                failed_stocks.append((ticker, str(e)))
-                # Log first few failures with details
-                if len(failed_stocks) <= 3:
-                    logger.error(f"Failed to process {ticker}: {e}")
+        stock_items = list(stock_data.items())
+        batch_size = 50  # Process 50 stocks at a time
+        
+        for batch_idx in range(0, len(stock_items), batch_size):
+            batch = stock_items[batch_idx:batch_idx + batch_size]
+            batch_X, batch_y = [], []
+            
+            for ticker, df in tqdm(batch, desc=f"Batch {batch_idx//batch_size + 1}/{(len(stock_items)-1)//batch_size + 1}"):
+                try:
+                    X, y, cols = self.prepare_stock_data(df)
+                    if len(X) == 0:
+                        failed_stocks.append((ticker, "empty result"))
+                        continue
+                    batch_X.append(X)
+                    batch_y.append(y)
+                    success_count += 1
+                    if feature_cols is None:
+                        feature_cols = cols
+                except Exception as e:
+                    failed_stocks.append((ticker, str(e)))
+                    if len(failed_stocks) <= 3:
+                        logger.error(f"Failed to process {ticker}: {e}")
+            
+            # Concatenate batch and add to all
+            if batch_X:
+                batch_X_arr = np.concatenate(batch_X, axis=0)
+                batch_y_arr = np.concatenate(batch_y, axis=0)
+                all_X.append(batch_X_arr)
+                all_y.append(batch_y_arr)
+                
+                # Free batch memory
+                del batch_X, batch_y
+                gc.collect()
+            
+            logger.info(f"Processed {min(batch_idx + batch_size, len(stock_items))}/{len(stock_items)} stocks")
         
         logger.info(f"Successfully processed: {success_count}/{len(stock_data)} stocks")
         if failed_stocks:
             logger.warning(f"Failed stocks: {len(failed_stocks)}")
-            # Show first 5 failures
             for ticker, reason in failed_stocks[:5]:
                 logger.warning(f"  {ticker}: {reason}")
         
@@ -370,8 +439,13 @@ class PooledExperimentV7:
             logger.error("Check that pandas_ta is installed: pip install pandas_ta")
             raise ValueError("No data available - all stocks failed during feature preparation")
         
+        logger.info("Concatenating all batches...")
         X_pooled = np.concatenate(all_X, axis=0)
         y_pooled = np.concatenate(all_y, axis=0)
+        
+        # Final cleanup
+        del all_X, all_y
+        gc.collect()
         
         logger.info(f"Pooled data: {X_pooled.shape[0]:,} samples, {X_pooled.shape[2]} features")
         return X_pooled, y_pooled, feature_cols
@@ -493,10 +567,26 @@ class PooledExperimentV7:
         logger.info(f"  Learning Rate: {self.learning_rate}")
         logger.info("=" * 80)
         
-        stock_data = self.load_all_stocks()
-        X, y, feature_cols = self.prepare_pooled_data(stock_data)
+        # Check feature cache first
+        n_stocks = len(self.stocks)
+        X, y, feature_cols = self.feature_cache.load(n_stocks, self.start_date, self.end_date, "v7")
         
-        logger.info(f"\nDataset: {len(X):,} samples, {len(feature_cols)} features, {len(stock_data)} stocks")
+        if X is None:
+            logger.info("No cached features found, computing from scratch...")
+            stock_data = self.load_all_stocks()
+            X, y, feature_cols = self.prepare_pooled_data(stock_data)
+            
+            # Save to cache for next time
+            self.feature_cache.save(X, y, feature_cols, len(stock_data), self.start_date, self.end_date, "v7")
+            
+            # Free memory - important for Colab!
+            del stock_data
+            import gc
+            gc.collect()
+        else:
+            logger.info("Using cached features (fast path)")
+        
+        logger.info(f"\nDataset: {len(X):,} samples, {len(feature_cols)} features")
         
         with open(self.output_dir / "features_v7.txt", "w") as f:
             for col in feature_cols:
