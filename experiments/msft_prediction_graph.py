@@ -2,7 +2,7 @@
 MSFT 2-Year Prediction Visualization.
 
 Generates a graph showing model predictions overlaid on MSFT price data.
-Uses the trained V5 model.
+Uses the trained V7 model with domain knowledge features.
 """
 
 import sys
@@ -21,18 +21,46 @@ from sklearn.preprocessing import StandardScaler
 
 from config import REPORTS_DIR, MODELS_DIR
 from src.models import AttentionLSTM
-from src.features import ComprehensiveIndicators  # Use centralized module
+from src.features.indicators_v7 import ComprehensiveIndicatorsV7  # V7 indicators with domain features
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 def load_best_model():
-    """Load the best V5 model."""
-    # Find latest model directory
-    model_dirs = sorted(MODELS_DIR.glob("20260124_*"), reverse=True)
+    """Load the best V7 model and its feature list."""
+    # 1. Find the latest V7 report directory for features
+    report_dirs = sorted(REPORTS_DIR.glob("pooled_v7_*"), reverse=True)
+    features_path = None
+    feature_names = []
     
+    for report_dir in report_dirs:
+        # Try features_v7.txt first, then features.txt
+        f7 = report_dir / "features_v7.txt"
+        f = report_dir / "features.txt"
+        
+        if f7.exists():
+            features_path = f7
+            break
+        elif f.exists():
+            features_path = f
+            break
+            
+    if not features_path:
+        raise FileNotFoundError("No features.txt or features_v7.txt found in any pooled_v7_* report directory!")
+        
+    logger.info(f"Loading features from {features_path}")
+    with open(features_path, 'r') as f:
+        feature_names = [line.strip() for line in f if line.strip()]
+    
+    # 2. Find the latest model in MODELS_DIR
+    # User specified "latest model under models folder"
+    # We look for YYYYMMDD_HHMMSS directories in models/
+    model_dirs = sorted([d for d in MODELS_DIR.iterdir() if d.is_dir() and d.name[0].isdigit()], reverse=True)
+    
+    model = None
     for model_dir in model_dirs:
+        # Check for best_model.pt
         best_model_path = model_dir / "best_model.pt"
         if best_model_path.exists():
             logger.info(f"Loading model from {best_model_path}")
@@ -40,8 +68,12 @@ def load_best_model():
             
             # Get input size from checkpoint
             state_dict = checkpoint['model_state_dict']
-            # LSTM input size from weight_ih_l0
             input_size = state_dict['lstm.weight_ih_l0'].shape[1]
+            
+            # Verify input size matches feature count
+            if input_size != len(feature_names):
+                logger.warning(f"Mismatch: Model expects {input_size} features, but found {len(feature_names)} in features file.")
+                logger.warning("Continuing, but this may cause shape errors if not handled.")
             
             model = AttentionLSTM(
                 input_size=input_size,
@@ -55,22 +87,36 @@ def load_best_model():
             model = model.to(device)
             model.eval()
             
-            return model
-    
-    raise FileNotFoundError("No trained model found!")
+            logger.info(f"Model loaded with {input_size} input features")
+            return model, feature_names
+            
+    raise FileNotFoundError("No best_model.pt found in any recent models directory!")
 
 
-def prepare_msft_data(start_date: str, end_date: str, sequence_length: int = 20):
-    """Download and prepare MSFT data."""
+def prepare_msft_data(start_date: str, end_date: str, feature_names: list, sequence_length: int = 20):
+    """Download and prepare MSFT data with V7 features."""
     logger.info(f"Downloading MSFT data from {start_date} to {end_date}")
     
     df = yf.download("MSFT", start=start_date, end=end_date, progress=False)
+    if df.empty:
+        raise ValueError("No data downloaded for MSFT")
+        
     df.columns = [c.capitalize() if isinstance(c, str) else c[0].capitalize() for c in df.columns]
     
-    # Compute indicators
-    indicators = ComprehensiveIndicators()
+    # Compute V7 technical indicators (includes domain knowledge features)
+    indicators = ComprehensiveIndicatorsV7()
     df = indicators.compute_all(df)
-    feature_cols = indicators.get_indicator_columns(df)
+    
+    # Verify all features exist
+    missing_cols = [col for col in feature_names if col not in df.columns]
+    if missing_cols:
+        logger.warning(f"Missing {len(missing_cols)} features: {missing_cols[:5]}...")
+        # Fill missing with 0 to prevent crash, though optimal is to fix computation
+        for col in missing_cols:
+            df[col] = 0.0
+            
+    # Select exactly the features expected by the model, in order
+    feature_data = df[feature_names].values
     
     # Actual returns for comparison
     df['actual_return'] = df['Close'].pct_change().shift(-1)
@@ -80,12 +126,30 @@ def prepare_msft_data(start_date: str, end_date: str, sequence_length: int = 20)
         labels=[0, 1, 2]
     ).astype(float)
     
-    df = df.dropna()
+    # We need to align the feature_data with the targets after dropna
+    # The original code dropped na then got features. 
+    # Here we need to be careful.
     
-    # Normalize features
+    # Create a clean dataframe for sequences
+    # We only drop rows if the *target* or *price* is missing, or if we have critical missingness
+    # But for features, we follow the training script's approach: 0-fill NaNs.
+    
+    # 1. Ensure we have valid targets and prices first
+    # Drop rows where we can't calculate return/trend (usually the last row)
+    df = df.dropna(subset=['actual_trend', 'Close'])
+    
+    feature_data = df[feature_names].values
+    
+    # 2. MATCH TRAINING LOGIC: Replace NaNs/Infs with 0.0 BEFORE scaling
+    # This matches pooled_price_baseline_v7.py lines 370-373
+    feature_data = np.nan_to_num(feature_data, nan=0.0, posinf=0.0, neginf=0.0)
+    
+    # 3. Scale
     scaler = StandardScaler()
-    feature_data = df[feature_cols].values
     feature_data = scaler.fit_transform(feature_data)
+    
+    # 4. MATCH TRAINING LOGIC: Replace NaNs/Infs with 0.0 AFTER scaling
+    # (Scaling might introduce NaNs if a column has variance 0)
     feature_data = np.nan_to_num(feature_data, nan=0.0, posinf=0.0, neginf=0.0)
     
     # Create sequences
@@ -94,9 +158,12 @@ def prepare_msft_data(start_date: str, end_date: str, sequence_length: int = 20)
     actual_trends = []
     sequences = []
     
+    # Use the index from the processed df
+    valid_dates = df.index
+    
     for i in range(len(feature_data) - sequence_length):
         sequences.append(feature_data[i:i + sequence_length])
-        dates.append(df.index[i + sequence_length])
+        dates.append(valid_dates[i + sequence_length])
         prices.append(df['Close'].iloc[i + sequence_length])
         actual_trends.append(df['actual_trend'].iloc[i + sequence_length])
     
@@ -226,11 +293,11 @@ def main():
     start_date = "2023-01-01"
     end_date = "2024-12-31"
     
-    # Load model
-    model = load_best_model()
+    # Load model and features
+    model, feature_names = load_best_model()
     
     # Prepare data
-    X, dates, prices, actual_trends = prepare_msft_data(start_date, end_date)
+    X, dates, prices, actual_trends = prepare_msft_data(start_date, end_date, feature_names)
     
     # Make predictions
     predictions, probs = predict_batched(model, X)
