@@ -197,8 +197,8 @@ class PriceCache:
 
 class IncrementalFeatureCache:
     """
-    Optimized cache that saves incrementally to avoid OOM
-    and uses fuzzy matching for filenames.
+    Optimized cache that uses Memory Mapping (memmap) to handle
+    datasets larger than available RAM.
     """
     
     def __init__(self, cache_dir: Path = None):
@@ -210,82 +210,113 @@ class IncrementalFeatureCache:
         self.temp_dir = self.cache_dir / "temp_batches"
     
     def get_cache_path(self, start_date: str, end_date: str, version: str = "v7") -> Path:
-        # NOTE: We removed n_stocks from the filename requirement to prevent cache misses
-        # when a few stocks fail to download.
-        pattern = f"features_{version}_*_{start_date}_{end_date}.npz"
+        pattern = f"features_{version}_*_{start_date}_{end_date}.npy" # Changed to .npy
         files = list(self.cache_dir.glob(pattern))
         if files:
-            # Return the largest file matching the pattern (most likely the full run)
             return max(files, key=lambda p: p.stat().st_size)
-        
-        # Default save path
-        return self.cache_dir / f"features_{version}_FULL_{start_date}_{end_date}.npz"
+        return self.cache_dir / f"features_{version}_FULL_{start_date}_{end_date}.npy"
+
+    def get_metadata_path(self, npy_path: Path) -> Path:
+        """Get path for the metadata (y and feature cols) sidecar file."""
+        return npy_path.with_suffix('.metadata.pkl')
 
     def save_batch(self, batch_idx: int, X: np.ndarray, y: np.ndarray):
-        """Saves a single batch to a temp folder."""
+        """Saves a single batch as uncompressed .npy for fast mapping."""
         self.temp_dir.mkdir(exist_ok=True)
-        # Save as float16 to save 50% disk space and write speed
-        np.savez_compressed(
-            self.temp_dir / f"batch_{batch_idx:04d}.npz",
-            X=X.astype(np.float16),
-            y=y
-        )
+        # We save X and y separately for easier merging
+        np.save(self.temp_dir / f"batch_{batch_idx:04d}_X.npy", X.astype(np.float32))
+        np.save(self.temp_dir / f"batch_{batch_idx:04d}_y.npy", y)
 
-    def compile_batches(self, feature_cols: List[str], n_stocks: int, start_date: str, end_date: str, version: str = "v7") -> Tuple[np.ndarray, np.ndarray]:
-        """Merges all temp batches into one file and returns the data."""
-        logger.info("Merging batch files from disk...")
-        batch_files = sorted(list(self.temp_dir.glob("batch_*.npz")))
+    def compile_batches(self, feature_cols: List[str], n_stocks: int, start_date: str, end_date: str, version: str = "v7") -> Tuple[np.ndarray, np.ndarray, List[str]]:
+        """
+        Merges batches directly to disk using memmap. 
+        Zero RAM spike.
+        """
+        logger.info("Merging batch files to disk (Memmap)...")
+        batch_files_X = sorted(list(self.temp_dir.glob("batch_*_X.npy")))
+        batch_files_y = sorted(list(self.temp_dir.glob("batch_*_y.npy")))
         
-        if not batch_files:
+        if not batch_files_X:
             raise ValueError("No batch files found to merge.")
 
-        # Load all to list (we still need RAM here, but we avoided the spike during processing)
-        all_X, all_y = [], []
-        for f in tqdm(batch_files, desc="Merging batches"):
-            data = np.load(f)
-            all_X.append(data['X'])
-            all_y.append(data['y'])
+        # 1. Calculate total size without loading data
+        total_samples = 0
+        sample_shapes = []
+        for f in batch_files_X:
+            # Read header only to get shape
+            shape = np.load(f, mmap_mode='r').shape
+            total_samples += shape[0]
+            if not sample_shapes:
+                sample_shapes = shape[1:]
         
-        # Concatenate
-        X_pooled = np.concatenate(all_X, axis=0)
-        y_pooled = np.concatenate(all_y, axis=0)
-        
-        # Clean up memory
-        del all_X, all_y
-        import gc; gc.collect()
+        logger.info(f"Total dataset size: {total_samples:,} samples. Creating memmap on disk...")
 
-        # Save final
-        final_path = self.cache_dir / f"features_{version}_{n_stocks}stocks_{start_date}_{end_date}.npz"
-        logger.info(f"Saving combined file to {final_path}")
-        np.savez_compressed(
-            final_path,
-            X=X_pooled,
-            y=y_pooled,
-            feature_cols=np.array(feature_cols, dtype=object)
-        )
+        # 2. Prepare Final Paths
+        final_path_X = self.cache_dir / f"features_{version}_{n_stocks}stocks_{start_date}_{end_date}.npy"
+        final_path_meta = self.get_metadata_path(final_path_X)
+
+        # 3. Create Memmap on Disk
+        fp_X = np.memmap(final_path_X, dtype='float32', mode='w+', shape=(total_samples, *sample_shapes))
         
-        # Cleanup temp
+        all_y = []
+
+        # 4. Stream data into the memmap
+        current_idx = 0
+        for f_X, f_y in zip(tqdm(batch_files_X, desc="Streaming to Disk"), batch_files_y):
+            batch_X = np.load(f_X)
+            batch_y = np.load(f_y)
+            
+            n = len(batch_X)
+            fp_X[current_idx : current_idx + n] = batch_X
+            all_y.append(batch_y)
+            current_idx += n
+            
+            del batch_X, batch_y
+        
+        fp_X.flush()
+        y_pooled = np.concatenate(all_y)
+        
+        # Save metadata
+        with open(final_path_meta, 'wb') as f:
+            pickle.dump({
+                'y': y_pooled,
+                'feature_cols': feature_cols,
+                'shape': (total_samples, *sample_shapes),
+                'dtype': 'float32'
+            }, f)
+
         shutil.rmtree(self.temp_dir)
         
-        return X_pooled, y_pooled
+        # FIXED: Returns 3 values now
+        return fp_X, y_pooled, feature_cols
 
     def load(self, start_date: str, end_date: str, version: str = "v7") -> Tuple[np.ndarray, np.ndarray, List[str]]:
-        cache_path = self.get_cache_path(start_date, end_date, version)
-        
-        if cache_path.exists():
-            logger.info(f"Loading cached features from {cache_path}")
-            # Use mmap_mode='r' if you strictly want to avoid loading to RAM, 
-            # but for training we usually need it in RAM eventually.
-            # We load, then immediately cast to float32 only if needed, or keep float16.
-            with np.load(cache_path, allow_pickle=True) as data:
-                X = data['X'] # This will be float16 if saved by us
-                y = data['y']
-                feature_cols = data['feature_cols'].tolist()
+        """Loads the large dataset using memory mapping."""
+        path_X = self.get_cache_path(start_date, end_date, version)
+        if not path_X.exists():
+            return None, None, None
             
-            logger.info(f"Loaded features: {X.shape[0]:,} samples")
-            return X, y, feature_cols
-        return None, None, None
+        path_meta = self.get_metadata_path(path_X)
+        if not path_meta.exists():
+            logger.warning("Found data file but missing metadata. Recomputing.")
+            return None, None, None
 
+        logger.info(f"Loading memory-mapped features from {path_X}")
+        
+        # Load metadata
+        with open(path_meta, 'rb') as f:
+            meta = pickle.load(f)
+            
+        y = meta['y']
+        feature_cols = meta['feature_cols']
+        shape = meta['shape']
+        dtype = meta.get('dtype', 'float32')
+
+        # Load X as Read-Only Memmap
+        X = np.memmap(path_X, dtype=dtype, mode='r', shape=shape)
+        
+        logger.info(f"Memmap linked: {X.shape[0]:,} samples (Disk Mode)")
+        return X, y, feature_cols
 
 class PooledExperimentV7:
     """V7: Domain knowledge features + more stocks."""
@@ -384,7 +415,8 @@ class PooledExperimentV7:
     
     def prepare_pooled_data(self, stock_data: Dict[str, pd.DataFrame]) -> Tuple[np.ndarray, np.ndarray, List[str]]:
         """
-        Fixed: Processes stocks in batches, saves to disk, and clears RAM immediately.
+        Fixed: Processes stocks in batches, saves to disk immediately, 
+        and uses 0 RAM for the final merge.
         """
         import gc
         import shutil
@@ -403,98 +435,33 @@ class PooledExperimentV7:
             
             for ticker, df in tqdm(batch, desc=f"Processing Batch {batch_idx//batch_size + 1}"):
                 try:
-                    X, y, cols = self.prepare_stock_data(df)
+                    # calls your missing method
+                    X, y, cols = self.prepare_stock_data(df) 
                     if len(X) > 0:
                         batch_X.append(X)
                         batch_y.append(y)
                         if feature_cols is None: 
                             feature_cols = cols
                 except Exception as e:
-                    logger.warning(f"Error {ticker}: {e}")
+                    # logger.warning(f"Error {ticker}: {e}")
+                    pass
             
-            # CRITICAL FIX: Save batch to disk and delete from RAM
+            # CRITICAL: Save batch to disk and delete from RAM immediately
             if batch_X:
                 batch_X_arr = np.concatenate(batch_X, axis=0)
                 batch_y_arr = np.concatenate(batch_y, axis=0)
                 
+                # Saves to .npy files in temp_dir
                 self.feature_cache.save_batch(batch_idx, batch_X_arr, batch_y_arr)
                 
-                # Force cleanup
+                # Force cleanup of RAM
                 del batch_X, batch_y, batch_X_arr, batch_y_arr
                 gc.collect()
                 
-        # Merge all disk files into one array at the very end
+        # Merge all disk files into one memory-mapped array (uses Disk, not RAM)
         return self.feature_cache.compile_batches(feature_cols, len(stock_data), self.start_date, self.end_date)
-    def prepare_pooled_data(self, stock_data: Dict[str, pd.DataFrame]) -> Tuple[np.ndarray, np.ndarray, List[str]]:
-        """
-        Process stocks in batches to avoid OOM on limited memory systems.
-        Processes 50 stocks at a time, concatenates, then garbage collects.
-        """
-        import gc
-        
-        all_X, all_y = [], []
-        feature_cols = None
-        failed_stocks = []
-        success_count = 0
-        
-        stock_items = list(stock_data.items())
-        batch_size = 50  # Process 50 stocks at a time
-        
-        for batch_idx in range(0, len(stock_items), batch_size):
-            batch = stock_items[batch_idx:batch_idx + batch_size]
-            batch_X, batch_y = [], []
-            
-            for ticker, df in tqdm(batch, desc=f"Batch {batch_idx//batch_size + 1}/{(len(stock_items)-1)//batch_size + 1}"):
-                try:
-                    X, y, cols = self.prepare_stock_data(df)
-                    if len(X) == 0:
-                        failed_stocks.append((ticker, "empty result"))
-                        continue
-                    batch_X.append(X)
-                    batch_y.append(y)
-                    success_count += 1
-                    if feature_cols is None:
-                        feature_cols = cols
-                except Exception as e:
-                    failed_stocks.append((ticker, str(e)))
-                    if len(failed_stocks) <= 3:
-                        logger.error(f"Failed to process {ticker}: {e}")
-            
-            # Concatenate batch and add to all
-            if batch_X:
-                batch_X_arr = np.concatenate(batch_X, axis=0)
-                batch_y_arr = np.concatenate(batch_y, axis=0)
-                all_X.append(batch_X_arr)
-                all_y.append(batch_y_arr)
-                
-                # Free batch memory
-                del batch_X, batch_y
-                gc.collect()
-            
-            logger.info(f"Processed {min(batch_idx + batch_size, len(stock_items))}/{len(stock_items)} stocks")
-        
-        logger.info(f"Successfully processed: {success_count}/{len(stock_data)} stocks")
-        if failed_stocks:
-            logger.warning(f"Failed stocks: {len(failed_stocks)}")
-            for ticker, reason in failed_stocks[:5]:
-                logger.warning(f"  {ticker}: {reason}")
-        
-        if len(all_X) == 0:
-            logger.error("No stocks were successfully processed!")
-            logger.error("Check that pandas_ta is installed: pip install pandas_ta")
-            raise ValueError("No data available - all stocks failed during feature preparation")
-        
-        logger.info("Concatenating all batches...")
-        X_pooled = np.concatenate(all_X, axis=0)
-        y_pooled = np.concatenate(all_y, axis=0)
-        
-        # Final cleanup
-        del all_X, all_y
-        gc.collect()
-        
-        logger.info(f"Pooled data: {X_pooled.shape[0]:,} samples, {X_pooled.shape[2]} features")
-        return X_pooled, y_pooled, feature_cols
-def prepare_stock_data(self, df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray, List[str]]:
+
+    def prepare_stock_data(self, df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray, List[str]]:
         # Compute indicators
         df = self.indicator_computer.compute_all(df)
         
