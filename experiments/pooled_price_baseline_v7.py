@@ -33,7 +33,9 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
-
+import glob
+import os
+import shutil
 # Import paths depend on environment
 try:
     from config import REPORTS_DIR, DATA_DIR, TOP_200_TICKERS, training_config, lstm_config
@@ -193,10 +195,10 @@ class PriceCache:
             logger.info(f"Cache exists, skipping write: {cache_path}")
 
 
-class FeatureCache:
+class IncrementalFeatureCache:
     """
-    Cache for computed features (X, y arrays).
-    Saves computed features to disk to avoid recomputation and reduce memory.
+    Optimized cache that saves incrementally to avoid OOM
+    and uses fuzzy matching for filenames.
     """
     
     def __init__(self, cache_dir: Path = None):
@@ -205,36 +207,84 @@ class FeatureCache:
         else:
             self.cache_dir = cache_dir or Path("/content/data/feature_cache")
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.temp_dir = self.cache_dir / "temp_batches"
     
-    def get_cache_path(self, n_stocks: int, start_date: str, end_date: str, version: str = "v7") -> Path:
-        return self.cache_dir / f"features_{version}_{n_stocks}stocks_{start_date}_{end_date}.npz"
-    
-    def exists(self, n_stocks: int, start_date: str, end_date: str, version: str = "v7") -> bool:
-        return self.get_cache_path(n_stocks, start_date, end_date, version).exists()
-    
-    def load(self, n_stocks: int, start_date: str, end_date: str, version: str = "v7") -> Tuple[np.ndarray, np.ndarray, List[str]]:
-        cache_path = self.get_cache_path(n_stocks, start_date, end_date, version)
-        if cache_path.exists():
-            logger.info(f"Loading cached features from {cache_path}")
-            data = np.load(cache_path, allow_pickle=True)
-            X = data['X']
-            y = data['y']
-            feature_cols = data['feature_cols'].tolist()
-            logger.info(f"Loaded features: {X.shape[0]:,} samples, {len(feature_cols)} features")
-            return X, y, feature_cols
-        return None, None, None
-    
-    def save(self, X: np.ndarray, y: np.ndarray, feature_cols: List[str], 
-             n_stocks: int, start_date: str, end_date: str, version: str = "v7"):
-        cache_path = self.get_cache_path(n_stocks, start_date, end_date, version)
-        logger.info(f"Saving features to cache: {cache_path}")
+    def get_cache_path(self, start_date: str, end_date: str, version: str = "v7") -> Path:
+        # NOTE: We removed n_stocks from the filename requirement to prevent cache misses
+        # when a few stocks fail to download.
+        pattern = f"features_{version}_*_{start_date}_{end_date}.npz"
+        files = list(self.cache_dir.glob(pattern))
+        if files:
+            # Return the largest file matching the pattern (most likely the full run)
+            return max(files, key=lambda p: p.stat().st_size)
+        
+        # Default save path
+        return self.cache_dir / f"features_{version}_FULL_{start_date}_{end_date}.npz"
+
+    def save_batch(self, batch_idx: int, X: np.ndarray, y: np.ndarray):
+        """Saves a single batch to a temp folder."""
+        self.temp_dir.mkdir(exist_ok=True)
+        # Save as float16 to save 50% disk space and write speed
         np.savez_compressed(
-            cache_path,
-            X=X,
-            y=y,
+            self.temp_dir / f"batch_{batch_idx:04d}.npz",
+            X=X.astype(np.float16),
+            y=y
+        )
+
+    def compile_batches(self, feature_cols: List[str], n_stocks: int, start_date: str, end_date: str, version: str = "v7") -> Tuple[np.ndarray, np.ndarray]:
+        """Merges all temp batches into one file and returns the data."""
+        logger.info("Merging batch files from disk...")
+        batch_files = sorted(list(self.temp_dir.glob("batch_*.npz")))
+        
+        if not batch_files:
+            raise ValueError("No batch files found to merge.")
+
+        # Load all to list (we still need RAM here, but we avoided the spike during processing)
+        all_X, all_y = [], []
+        for f in tqdm(batch_files, desc="Merging batches"):
+            data = np.load(f)
+            all_X.append(data['X'])
+            all_y.append(data['y'])
+        
+        # Concatenate
+        X_pooled = np.concatenate(all_X, axis=0)
+        y_pooled = np.concatenate(all_y, axis=0)
+        
+        # Clean up memory
+        del all_X, all_y
+        import gc; gc.collect()
+
+        # Save final
+        final_path = self.cache_dir / f"features_{version}_{n_stocks}stocks_{start_date}_{end_date}.npz"
+        logger.info(f"Saving combined file to {final_path}")
+        np.savez_compressed(
+            final_path,
+            X=X_pooled,
+            y=y_pooled,
             feature_cols=np.array(feature_cols, dtype=object)
         )
-        logger.info(f"Saved {X.shape[0]:,} samples to {cache_path}")
+        
+        # Cleanup temp
+        shutil.rmtree(self.temp_dir)
+        
+        return X_pooled, y_pooled
+
+    def load(self, start_date: str, end_date: str, version: str = "v7") -> Tuple[np.ndarray, np.ndarray, List[str]]:
+        cache_path = self.get_cache_path(start_date, end_date, version)
+        
+        if cache_path.exists():
+            logger.info(f"Loading cached features from {cache_path}")
+            # Use mmap_mode='r' if you strictly want to avoid loading to RAM, 
+            # but for training we usually need it in RAM eventually.
+            # We load, then immediately cast to float32 only if needed, or keep float16.
+            with np.load(cache_path, allow_pickle=True) as data:
+                X = data['X'] # This will be float16 if saved by us
+                y = data['y']
+                feature_cols = data['feature_cols'].tolist()
+            
+            logger.info(f"Loaded features: {X.shape[0]:,} samples")
+            return X, y, feature_cols
+        return None, None, None
 
 
 class PooledExperimentV7:
@@ -274,7 +324,7 @@ class PooledExperimentV7:
         
         self.indicator_computer = ComprehensiveIndicatorsV7()
         self.price_cache = PriceCache()
-        self.feature_cache = FeatureCache()
+        self.feature_cache = IncrementalFeatureCache()
         
     def load_all_stocks(self) -> Dict[str, pd.DataFrame]:
         """Load stocks: use cache + download only missing stocks."""
@@ -332,54 +382,49 @@ class PooledExperimentV7:
         logger.info(f"Total: {len(stock_data)} stocks ready")
         return stock_data
     
-    def prepare_stock_data(self, df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray, List[str]]:
-        # Compute indicators
-        df = self.indicator_computer.compute_all(df)
+    def prepare_pooled_data(self, stock_data: Dict[str, pd.DataFrame]) -> Tuple[np.ndarray, np.ndarray, List[str]]:
+        """
+        Fixed: Processes stocks in batches, saves to disk, and clears RAM immediately.
+        """
+        import gc
+        import shutil
         
-        # Get feature columns and filter out any invalid ones
-        feature_cols = self.indicator_computer.get_indicator_columns(df)
+        # Reset temp dir to avoid mixing old runs
+        if self.feature_cache.temp_dir.exists():
+            shutil.rmtree(self.feature_cache.temp_dir)
         
-        # Remove columns that are all NaN or don't exist
-        valid_cols = []
-        for col in feature_cols:
-            if col in df.columns:
-                # Check if column has at least some valid data
-                if df[col].notna().sum() > 10:
-                    valid_cols.append(col)
-        feature_cols = valid_cols
+        feature_cols = None
+        stock_items = list(stock_data.items())
+        batch_size = 50 
         
-        if len(feature_cols) < 5:
-            logger.debug(f"Too few valid features: {len(feature_cols)}")
-            return np.array([]), np.array([]), []
-        
-        df['return_next'] = df['Close'].pct_change().shift(-1)
-        df['trend'] = pd.cut(
-            df['return_next'],
-            bins=[-np.inf, -0.005, 0.005, np.inf],
-            labels=[0, 1, 2]
-        ).astype(float)
-        
-        df = df.dropna(subset=['trend'] + feature_cols[:10])  # Only require core features
-        if len(df) < self.sequence_length + 10:
-            return np.array([]), np.array([]), []
-        
-        # Scale features
-        scaler = StandardScaler()
-        feature_data = df[feature_cols].values
-        
-        # Replace infinite values before scaling
-        feature_data = np.nan_to_num(feature_data, nan=0.0, posinf=0.0, neginf=0.0)
-        feature_data = scaler.fit_transform(feature_data)
-        feature_data = np.nan_to_num(feature_data, nan=0.0, posinf=0.0, neginf=0.0)
-        
-        labels = df['trend'].values
-        X, y = [], []
-        for i in range(len(feature_data) - self.sequence_length):
-            X.append(feature_data[i:i + self.sequence_length])
-            y.append(labels[i + self.sequence_length])
-        
-        return np.array(X, dtype=np.float32), np.array(y, dtype=np.int64), feature_cols
-    
+        for batch_idx in range(0, len(stock_items), batch_size):
+            batch = stock_items[batch_idx:batch_idx + batch_size]
+            batch_X, batch_y = [], []
+            
+            for ticker, df in tqdm(batch, desc=f"Processing Batch {batch_idx//batch_size + 1}"):
+                try:
+                    X, y, cols = self.prepare_stock_data(df)
+                    if len(X) > 0:
+                        batch_X.append(X)
+                        batch_y.append(y)
+                        if feature_cols is None: 
+                            feature_cols = cols
+                except Exception as e:
+                    logger.warning(f"Error {ticker}: {e}")
+            
+            # CRITICAL FIX: Save batch to disk and delete from RAM
+            if batch_X:
+                batch_X_arr = np.concatenate(batch_X, axis=0)
+                batch_y_arr = np.concatenate(batch_y, axis=0)
+                
+                self.feature_cache.save_batch(batch_idx, batch_X_arr, batch_y_arr)
+                
+                # Force cleanup
+                del batch_X, batch_y, batch_X_arr, batch_y_arr
+                gc.collect()
+                
+        # Merge all disk files into one array at the very end
+        return self.feature_cache.compile_batches(feature_cols, len(stock_data), self.start_date, self.end_date)
     def prepare_pooled_data(self, stock_data: Dict[str, pd.DataFrame]) -> Tuple[np.ndarray, np.ndarray, List[str]]:
         """
         Process stocks in batches to avoid OOM on limited memory systems.
@@ -471,22 +516,42 @@ class PooledExperimentV7:
         return np.concatenate(all_preds)
     
     def train_model(self, X: np.ndarray, y: np.ndarray) -> Dict:
-        """Train with V7 features."""
+        """
+        Fixed: Uses TensorDataset with references to avoid copying data.
+        """
+        import gc
         
+        # Shuffle indices instead of shuffling the huge array
         indices = np.random.permutation(len(X))
-        X = X[indices]
-        y = y[indices]
-        
         n = len(X)
         train_end = int(0.8 * n)
         val_end = int(0.9 * n)
         
-        X_train, y_train = X[:train_end], y[:train_end]
-        X_val, y_val = X[train_end:val_end], y[train_end:val_end]
-        X_test, y_test = X[val_end:], y[val_end:]
+        # Helper to create dataset without exploding RAM
+        # We use torch.from_numpy which creates a view, not a copy (if types match)
+        def create_dataset(idx_subset):
+            # X is likely float16 from cache, we cast to float32 on the fly or here
+            x_tensor = torch.from_numpy(X[idx_subset]).float() 
+            y_tensor = torch.from_numpy(y[idx_subset]).long()
+            return TensorDataset(x_tensor, y_tensor)
+
+        logger.info("Creating Tensor Datasets...")
+        train_dataset = create_dataset(indices[:train_end])
+        val_dataset = create_dataset(indices[train_end:val_end])
         
-        logger.info(f"Train: {len(X_train):,}, Val: {len(X_val):,}, Test: {len(X_test):,}")
+        # We can now aggressively clean up if we were copying, but since we are referencing
+        # the main X array, we must keep X in memory. 
+        # The key save here was removing the intermediate "X_train = ..." numpy copies.
+
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            # pin_memory=True if torch.cuda.is_available() else False # Optional speedup
+        )
+        val_loader = DataLoader(val_dataset, batch_size=self.batch_size)
         
+        # --- Model Setup ---
         model = AttentionLSTM(
             input_size=X.shape[-1],
             hidden_size=lstm_config.hidden_size if RUNNING_LOCAL else 128,
@@ -494,35 +559,24 @@ class PooledExperimentV7:
             dropout=self.dropout,
         )
         
-        n_params = sum(p.numel() for p in model.parameters())
-        ratio = len(X_train) / n_params
-        logger.info(f"Model params: {n_params:,}, Samples/params: {ratio:.2f}x")
-        logger.info(f"Features: {X.shape[-1]} (V7 with domain knowledge)")
-        
         loss_fn = nn.CrossEntropyLoss()
-        
         trainer = Trainer(
             model, loss_fn,
             learning_rate=self.learning_rate,
             weight_decay=1e-4,
         )
         
-        train_loader = DataLoader(
-            TensorDataset(torch.FloatTensor(X_train), torch.LongTensor(y_train)),
-            batch_size=self.batch_size,
-            shuffle=True,
-        )
-        val_loader = DataLoader(
-            TensorDataset(torch.FloatTensor(X_val), torch.LongTensor(y_val)),
-            batch_size=self.batch_size,
-        )
-        
         training_config.early_stopping_patience = self.early_stopping_patience
         history = trainer.train(train_loader, val_loader, epochs=self.epochs)
         
+        # --- Evaluation ---
+        # Evaluate on Test set
+        test_indices = indices[val_end:]
+        X_test = X[test_indices]
+        y_test = y[test_indices]
+        
         logger.info("Evaluating on test set...")
         pred_classes = self.predict_batched(model, X_test, batch_size=2048)
-        
         accuracy = (pred_classes == y_test).mean()
         
         class_acc = {}
@@ -559,35 +613,24 @@ class PooledExperimentV7:
     
     def run(self):
         logger.info("=" * 80)
-        logger.info("POOLED BASELINE V7: Domain Knowledge Features")
-        logger.info("=" * 80)
-        logger.info(f"  Target Stocks: {len(self.stocks)}")
-        logger.info(f"  Colab Mode: {self.colab_mode}")
-        logger.info(f"  Dropout: {self.dropout}")
-        logger.info(f"  Learning Rate: {self.learning_rate}")
+        logger.info("POOLED BASELINE V7: Incremental Cache Mode")
         logger.info("=" * 80)
         
-        # Check feature cache first
-        n_stocks = len(self.stocks)
-        X, y, feature_cols = self.feature_cache.load(n_stocks, self.start_date, self.end_date, "v7")
+        # 1. Fuzzy Load (matches any stock count)
+        X, y, feature_cols = self.feature_cache.load(self.start_date, self.end_date, "v7")
         
+        stock_data = {}
         if X is None:
-            logger.info("No cached features found, computing from scratch...")
+            logger.info("Cache miss. Calculating...")
             stock_data = self.load_all_stocks()
             X, y, feature_cols = self.prepare_pooled_data(stock_data)
             
-            # Save to cache for next time
-            self.feature_cache.save(X, y, feature_cols, len(stock_data), self.start_date, self.end_date, "v7")
-            
-            # Free memory - important for Colab!
+            # Free stock data memory immediately after feature extraction
             del stock_data
-            import gc
-            gc.collect()
+            import gc; gc.collect()
         else:
-            logger.info("Using cached features (fast path)")
-        
-        logger.info(f"\nDataset: {len(X):,} samples, {len(feature_cols)} features")
-        
+             logger.info("Cache hit!")
+
         with open(self.output_dir / "features_v7.txt", "w") as f:
             for col in feature_cols:
                 f.write(f"{col}\n")
@@ -596,17 +639,6 @@ class PooledExperimentV7:
         
         results_df = pd.DataFrame([result])
         results_df.to_csv(self.output_dir / "results.csv", index=False)
-        
-        logger.info("\n" + "=" * 80)
-        logger.info("V7 RESULTS")
-        logger.info("=" * 80)
-        logger.info(f"  Test Accuracy: {result['test_accuracy']:.2%}")
-        logger.info(f"  Features: {result['n_features']} (V7)")
-        logger.info(f"  Stocks: {len(stock_data)}")
-        logger.info(f"  Samples: {result['total_samples']:,}")
-        logger.info(f"  Sample/Param Ratio: {result['samples_per_param']:.1f}x")
-        logger.info(f"\nResults saved to: {self.output_dir}")
-        
         return result
 
 
