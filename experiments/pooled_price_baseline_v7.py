@@ -494,7 +494,54 @@ class PooledExperimentV7:
         
         logger.info(f"Pooled data: {X_pooled.shape[0]:,} samples, {X_pooled.shape[2]} features")
         return X_pooled, y_pooled, feature_cols
-    
+def prepare_stock_data(self, df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray, List[str]]:
+        # Compute indicators
+        df = self.indicator_computer.compute_all(df)
+        
+        # Get feature columns and filter out any invalid ones
+        feature_cols = self.indicator_computer.get_indicator_columns(df)
+        
+        # Remove columns that are all NaN or don't exist
+        valid_cols = []
+        for col in feature_cols:
+            if col in df.columns:
+                # Check if column has at least some valid data
+                if df[col].notna().sum() > 10:
+                    valid_cols.append(col)
+        feature_cols = valid_cols
+        
+        if len(feature_cols) < 5:
+            # logger.debug(f"Too few valid features: {len(feature_cols)}")
+            return np.array([]), np.array([]), []
+        
+        df['return_next'] = df['Close'].pct_change().shift(-1)
+        df['trend'] = pd.cut(
+            df['return_next'],
+            bins=[-np.inf, -0.005, 0.005, np.inf],
+            labels=[0, 1, 2]
+        ).astype(float)
+        
+        df = df.dropna(subset=['trend'] + feature_cols[:10])  # Only require core features
+        if len(df) < self.sequence_length + 10:
+            return np.array([]), np.array([]), []
+        
+        # Scale features
+        scaler = StandardScaler()
+        feature_data = df[feature_cols].values
+        
+        # Replace infinite values before scaling
+        feature_data = np.nan_to_num(feature_data, nan=0.0, posinf=0.0, neginf=0.0)
+        feature_data = scaler.fit_transform(feature_data)
+        feature_data = np.nan_to_num(feature_data, nan=0.0, posinf=0.0, neginf=0.0)
+        
+        labels = df['trend'].values
+        X, y = [], []
+        for i in range(len(feature_data) - self.sequence_length):
+            X.append(feature_data[i:i + self.sequence_length])
+            y.append(labels[i + self.sequence_length])
+        
+        return np.array(X, dtype=np.float32), np.array(y, dtype=np.int64), feature_cols
+
     def predict_batched(self, model: nn.Module, X: np.ndarray, batch_size: int = 2048) -> np.ndarray:
         """Batched prediction to avoid OOM."""
         model.eval()
