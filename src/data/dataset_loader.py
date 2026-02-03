@@ -235,34 +235,55 @@ class DatasetLoader:
         matching_rows = 0
         
         try:
-            # We only need specific columns to save memory
-            use_cols = ["Date", "Stock_symbol", "Article_title"]
+            # We explicitly define the columns we expect in the CSV to avoiding reading everything
+            # The CSV has headers: Date,Article_title,Stock_symbol,Url,Publisher,Author,Article,Lable,Probability
+            # We want Date, Stock_symbol, Article_title
             
-            for chunk in tqdm(pd.read_csv(csv_path, chunksize=chunk_size, usecols=lambda c: c in use_cols), desc="Processing chunks"):
+            # Note: We can't easily use case-insensitive usecols with chunks if we don't know exact casing beforehand.
+            # But we saw the header in the file tool output earlier? No, we didn't see the CSV content, only cache files.
+            # The user logs show "Stock_symbol", "Article_title", "Date" are likely.
+            
+            # Let's try reading without usecols for robustness, but only keeping what we need immediately
+            # or usage engine="python" with on_bad_lines='skip'
+            
+            for chunk in tqdm(pd.read_csv(csv_path, chunksize=chunk_size, on_bad_lines='skip', engine='c', low_memory=False), desc="Processing chunks"):
                 # Normalize column names
                 chunk.columns = [c.lower() for c in chunk.columns]
-                # date, stock_symbol, article_title
                 
+                # Check if we have necessary columns
+                # stock_symbol or ticker
+                ticker_col = "stock_symbol" if "stock_symbol" in chunk.columns else "ticker"
+                title_col = "article_title" if "article_title" in chunk.columns else "headline"
+                date_col = "date"
+                
+                if ticker_col not in chunk.columns:
+                     continue
+                     
                 # Filter by ticker
-                if "stock_symbol" in chunk.columns:
-                    mask = chunk["stock_symbol"].isin(self._ticker_set)
-                    filtered = chunk[mask].copy()
+                mask = chunk[ticker_col].isin(self._ticker_set)
+                filtered = chunk[mask].copy()
+                
+                if len(filtered) > 0:
+                    # Rename columns to match expected format
+                    rename_map = {ticker_col: "ticker"}
+                    if title_col in filtered.columns:
+                        rename_map[title_col] = "headline"
                     
-                    if len(filtered) > 0:
-                        # Rename columns to match expected format
-                        filtered = filtered.rename(columns={
-                            "stock_symbol": "ticker",
-                            "article_title": "headline"
-                        })
-                        chunks.append(filtered)
-                        matching_rows += len(filtered)
+                    filtered = filtered.rename(columns=rename_map)
+                    
+                    # Ensure we keep only relevant columns to save memory
+                    keep_cols = ["date", "ticker", "headline"]
+                    filtered = filtered[[c for c in keep_cols if c in filtered.columns]]
+                    
+                    chunks.append(filtered)
+                    matching_rows += len(filtered)
                 
                 total_rows += len(chunk)
-                # Optional: limit for testing
-                # if total_rows > 1000000: break
-                
+
         except Exception as e:
-            logger.error(f"Error reading CSV chunk: {e}")
+            logger.error(f"Error reading CSV: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return pd.DataFrame(), pd.DataFrame()
             
         if not chunks:

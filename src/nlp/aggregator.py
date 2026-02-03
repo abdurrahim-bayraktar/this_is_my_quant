@@ -82,6 +82,35 @@ class SentimentAggregator:
             if self.strategy != "simple":
                 logger.warning(f"Unknown strategy {self.strategy}, using simple")
             return self._aggregate_simple(df, sentiment_col, date_col, ticker_col)
+
+    def _aggregate_simple(
+        self,
+        df: pd.DataFrame,
+        sentiment_col: str,
+        date_col: str,
+        ticker_col: str,
+    ) -> pd.DataFrame:
+        """
+        Simple average aggregation.
+        """
+        df = df.copy()
+        
+        # Group by ticker and date
+        grouped = df.groupby([ticker_col, date_col])
+        
+        # Aggregate
+        daily_df = grouped[sentiment_col].mean().reset_index()
+        daily_df = daily_df.rename(columns={sentiment_col: "sentiment_mean"})
+        
+        # Calculate dispersion (std dev)
+        daily_df["sentiment_dispersion"] = grouped[sentiment_col].std().values
+        daily_df["sentiment_dispersion"] = daily_df["sentiment_dispersion"].fillna(0)
+        
+        # Count
+        daily_df["news_count"] = grouped[sentiment_col].count().values
+        
+        logger.info(f"Simple aggregation: {len(daily_df)} daily observations")
+        return daily_df
             
     def _aggregate_sticky(
         self,

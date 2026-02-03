@@ -23,6 +23,7 @@ ENV/
 # Project specific
 # Data
 /data/
+/reports/
 
 # Logs
 /logs/
