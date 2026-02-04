@@ -380,3 +380,141 @@ class ComprehensiveIndicatorsV7:
     def get_indicator_count(self, df: pd.DataFrame) -> int:
         """Get the number of indicator columns."""
         return len(self.get_indicator_columns(df))
+    
+    def compute_shap_top20(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Compute only the SHAP top 20 features.
+        
+        These features were selected by SHAP importance analysis:
+        - atr_pct, intraday_range, bb_BBB_5_2.0_2.0, gap, cci
+        - high_low_pct, volume_ratio, adx_DMN_14, return_1d, aroon_AROOND_14
+        - adx_DMP_14, obv, ad, bear_power, roc_10
+        - pvo_PVOh_12_26_9, trix_TRIXs_30_9, rsi_14, aroon_AROONU_14, return_5d
+        """
+        df = df.copy()
+        
+        # Normalize column names
+        required = ['Open', 'High', 'Low', 'Close', 'Volume']
+        for col in required:
+            if col not in df.columns:
+                if col.lower() in df.columns:
+                    df[col] = df[col.lower()]
+                elif col.capitalize() in df.columns:
+                    df[col] = df[col.capitalize()]
+        
+        for col in required:
+            if col not in df.columns:
+                logger.error(f"Missing required column: {col}")
+                return df
+        
+        if not self.ta_available:
+            logger.error("pandas_ta required for compute_shap_top20")
+            return df
+        
+        # Helper function to safely compute indicators
+        def safe_compute(name, func):
+            try:
+                result = func()
+                return result
+            except Exception as e:
+                logger.debug(f"Failed to compute {name}: {e}")
+                return None
+        
+        # ===== PRICE FEATURES =====
+        df['return_1d'] = df['Close'].pct_change()
+        df['return_5d'] = df['Close'].pct_change(5)
+        df['high_low_pct'] = (df['Close'] - df['Low']) / (df['High'] - df['Low']).replace(0, np.nan)
+        df['gap'] = (df['Open'] - df['Close'].shift(1)) / df['Close'].shift(1)
+        df['intraday_range'] = (df['High'] - df['Low']) / df['Open']
+        
+        # ===== VOLATILITY =====
+        df['atr'] = self.ta.atr(df['High'], df['Low'], df['Close'])
+        df['atr_pct'] = df['atr'] / df['Close'] * 100
+        
+        # Bollinger Bands (for bb_BBB_5_2.0_2.0)
+        bbands = self.ta.bbands(df['Close'], length=5, std=2.0)
+        if bbands is not None:
+            for col in bbands.columns:
+                df[f'bb_{col}'] = bbands[col]
+        
+        # ===== MOMENTUM =====
+        df['cci'] = self.ta.cci(df['High'], df['Low'], df['Close'])
+        df['rsi_14'] = self.ta.rsi(df['Close'], length=14)
+        df['roc_10'] = self.ta.roc(df['Close'], length=10)
+        
+        # ADX (for adx_DMN_14, adx_DMP_14)
+        adx = self.ta.adx(df['High'], df['Low'], df['Close'])
+        if adx is not None:
+            for col in adx.columns:
+                df[f'adx_{col}'] = adx[col]
+        
+        # Aroon (for aroon_AROOND_14, aroon_AROONU_14)
+        aroon = self.ta.aroon(df['High'], df['Low'])
+        if aroon is not None:
+            for col in aroon.columns:
+                df[f'aroon_{col}'] = aroon[col]
+        
+        # TRIX (for trix_TRIXs_30_9)
+        trix = self.ta.trix(df['Close'], length=30, signal=9)
+        if trix is not None:
+            if isinstance(trix, pd.DataFrame):
+                for col in trix.columns:
+                    df[f'trix_{col}'] = trix[col]
+            else:
+                df['trix'] = trix
+        
+        # ===== TREND =====
+        ema_13 = self.ta.ema(df['Close'], length=13)
+        df['bear_power'] = df['Low'] - ema_13
+        
+        # ===== VOLUME =====
+        df['volume_sma_20'] = self.ta.sma(df['Volume'], length=20)
+        df['volume_ratio'] = df['Volume'] / df['volume_sma_20'].replace(0, np.nan)
+        
+        df['obv'] = self.ta.obv(df['Close'], df['Volume'])
+        
+        ad = self.ta.ad(df['High'], df['Low'], df['Close'], df['Volume'])
+        if ad is not None:
+            df['ad'] = ad
+        
+        # PVO (for pvo_PVOh_12_26_9)
+        pvo = self.ta.pvo(df['Volume'])
+        if pvo is not None:
+            if isinstance(pvo, pd.DataFrame):
+                for col in pvo.columns:
+                    df[f'pvo_{col}'] = pvo[col]
+            else:
+                df['pvo'] = pvo
+        
+        # Drop intermediate columns
+        if 'volume_sma_20' in df.columns:
+            df = df.drop(columns=['volume_sma_20'])
+        if 'atr' in df.columns:
+            df = df.drop(columns=['atr'])  # Keep atr_pct only
+        
+        return df
+    
+    def get_shap_top20_columns(self) -> list:
+        """Return the list of SHAP top 20 feature column names."""
+        return [
+            "atr_pct",
+            "intraday_range",
+            "bb_BBB_5_2.0_2.0",
+            "gap",
+            "cci",
+            "high_low_pct",
+            "volume_ratio",
+            "adx_DMN_14",
+            "return_1d",
+            "aroon_AROOND_14",
+            "adx_DMP_14",
+            "obv",
+            "ad",
+            "bear_power",
+            "roc_10",
+            "pvo_PVOh_12_26_9",
+            "trix_TRIXs_30_9",
+            "rsi_14",
+            "aroon_AROONU_14",
+            "return_5d"
+        ]
