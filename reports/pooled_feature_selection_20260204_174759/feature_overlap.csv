@@ -1,0 +1,4 @@
+method_1,method_2,jaccard_similarity,overlap_count,overlap_features
+mi_top30,shap_top30,0.25,12,"['high_low_pct', 'bb_BBB_5_2.0_2.0', 'roc_10', 'log_return', 'return_1d', 'return_5d', 'cci', 'ppo_PPOh_12_26_9', 'trix_TRIXs_30_9', 'intraday_range']"
+mi_top30,rfe_top30,0.30434782608695654,14,"['high_low_pct', 'roc_10', 'bb_BBB_5_2.0_2.0', 'log_return', 'return_5d', 'cci', 'ppo_PPOh_12_26_9', 'coppock', 'trix_TRIXs_30_9', 'intraday_range']"
+shap_top30,rfe_top30,0.7647058823529411,26,"['roc_10', 'bb_BBB_5_2.0_2.0', 'stoch_STOCHh_14_3_3', 'return_5d', 'volume_ratio', 'adx_DMN_14', 'ppo_PPOh_12_26_9', 'obv', 'roc_20', 'pvo_PVOh_12_26_9']"

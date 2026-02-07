@@ -1,0 +1,4 @@
+description,n_features,n_params,train_samples,test_samples,accuracy,zero_rule_baseline,accuracy_lift,f1_macro,mcc,epochs_trained,ticker,method,top_k,selected_features
+all_features,108,69764,1796,397,0.3526448362720403,0.3778337531486146,-0.02518891687657432,0.26382837172766477,-0.026300867779383785,6,MSFT,baseline,108,
+mutual_info_top30,30,49796,1796,397,0.36523929471032746,0.3778337531486146,-0.01259445843828716,0.25192618408578027,0.0410968490632256,10,MSFT,mutual_info,30,"['ichimoku_IKS_26', 'donchian_DCM_20_20', 'dema_20', 'ema_5', 'ema_12', 'donchian_DCU_20_20', 'bb_BBM_5_2.0_2.0', 'sma_5', 'vwma_20', 'sma_20']"
+rfe_top30,30,49796,1796,397,0.36272040302267,0.3778337531486146,-0.015113350125944613,0.32022568669943446,0.011078825053837888,19,MSFT,rfe,30,"['hma_20', 'rsi_14', 'stoch_STOCHh_14_3_3', 'stochrsi_STOCHRSIk_14_14_3_3', 'macd_MACD_12_26_9', 'willr', 'roc_20', 'ppo_PPOh_12_26_9', 'trix_TRIXs_30_9', 'aroon_AROONOSC_14']"

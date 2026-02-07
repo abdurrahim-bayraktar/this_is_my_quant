@@ -1,0 +1,2 @@
+train_stocks,test_stocks,avg_accuracy,avg_lift,avg_mcc,train_time,dropout,label_smoothing
+996,10,0.39622166246851387,-0.01612090680100755,0.0069929379934726785,302.3169934749603,0.2,0.1

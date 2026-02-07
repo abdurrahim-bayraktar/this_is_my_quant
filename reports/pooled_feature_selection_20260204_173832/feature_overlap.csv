@@ -1,0 +1,4 @@
+method_1,method_2,jaccard_similarity,overlap_count,overlap_features
+mi_top30,shap_top30,0.2,10,"['obv', 'coppock', 'ema_bullish', 'rsi_bullish', 'donchian_DCU_20_20', 'bb_BBL_5_2.0_2.0', 'bullish_score', 'return_20d', 'donchian_DCM_20_20', 'atr_pct']"
+mi_top30,rfe_top30,0.2765957446808511,13,"['true_range', 'intraday_range', 'coppock', 'obv', 'ad', 'trix_TRIXs_30_9', 'ppo_PPOh_12_26_9', 'return_5d', 'ichimoku_ISB_26', 'bb_BBB_5_2.0_2.0']"
+shap_top30,rfe_top30,0.15384615384615385,8,"['coppock', 'obv', 'atr_pct', 'return_1d', 'adx_DMN_14', 'pvo_PVOs_12_26_9', 'adx_ADX_14', 'volume_ratio']"

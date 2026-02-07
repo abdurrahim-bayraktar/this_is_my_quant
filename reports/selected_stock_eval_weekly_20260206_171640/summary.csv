@@ -1,0 +1,2 @@
+frequency,train_stocks,test_stocks,sequence_length_weeks,avg_accuracy,avg_lift,avg_mcc,train_time,dropout,label_smoothing
+weekly,996,10,12,0.40843373493975904,-0.03012048192771083,-0.010268501383082771,119.88102340698242,0.2,0.1
