@@ -55,7 +55,7 @@ class ComprehensiveIndicators:
             logger.warning("pandas_ta not installed. Run: pip install pandas_ta")
             self.ta_available = False
     
-    def compute_all(self, df: pd.DataFrame) -> pd.DataFrame:
+    def compute_all(self, df: pd.DataFrame, exclude: List[str] = None) -> pd.DataFrame:
         """
         Compute all technical indicators.
         
@@ -67,6 +67,7 @@ class ComprehensiveIndicators:
             DataFrame with all indicators added as new columns.
             Original OHLCV columns are preserved.
         """
+        exclude = exclude or []
         df = df.copy()
         
         # Normalize column names
@@ -98,7 +99,9 @@ class ComprehensiveIndicators:
         ichimoku = self.ta.ichimoku(df['High'], df['Low'], df['Close'])
         if ichimoku is not None and len(ichimoku) > 0 and ichimoku[0] is not None:
             for col in ichimoku[0].columns:
-                df[f'ichimoku_{col}'] = ichimoku[0][col]
+                col_name = f'ichimoku_{col}'
+                if col_name not in exclude:
+                    df[col_name] = ichimoku[0][col]
         
         # ===== MOMENTUM OSCILLATORS =====
         df['rsi_14'] = self.ta.rsi(df['Close'], length=14)

@@ -11,7 +11,6 @@ ichimoku_ISA_9
 ichimoku_ISB_26
 ichimoku_ITS_9
 ichimoku_IKS_26
-ichimoku_ICS_26
 rsi_14
 rsi_7
 stoch_STOCHk_14_3_3
