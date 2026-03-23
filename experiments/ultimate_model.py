@@ -55,9 +55,26 @@ except ImportError:
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
+# === CUDA Diagnostics ===
+logger.info(f"PyTorch {torch.__version__}")
+if torch.cuda.is_available():
+    gpu = torch.cuda.get_device_name(0)
+    _, total_vram = torch.cuda.mem_get_info(0)
+    logger.info(f"CUDA: {gpu} ({total_vram / 1024**3:.1f} GB VRAM)")
+else:
+    logger.info("CUDA: Not available — running on CPU")
+
 # ============================================================================
 # FEATURES
 # ============================================================================
+# Note on indicator periods with weekly data:
+# All compute_shap_top20() indicators use fixed lookback periods (14, 20, 30).
+# On daily data: RSI-14 = 14 days, ATR-14 = 14 days, TRIX-30 = 30 days.
+# On weekly data: RSI-14 = 14 weeks (~3 months), TRIX-30 = 30 weeks (~7 months).
+# The indicators remain mathematically valid. Longer calendar windows may actually
+# help on weekly data by capturing more structural patterns.
+# If weekly results are poor, consider an experiment that recomputes indicators
+# with shorter periods (e.g., RSI-7 instead of RSI-14 for weekly).
 
 SHAP_TOP20_FEATURES = [
     "atr_pct", "intraday_range", "bb_BBB_5_2.0_2.0", "gap", "cci",
@@ -133,6 +150,8 @@ class Trainer:
         total_loss = 0.0
         correct = 0
         total = 0
+        n_batches = 0
+        epoch_start = time.time()
         
         for X, y in train_loader:
             X, y = X.to(self.device), y.to(self.device)
@@ -158,8 +177,16 @@ class Trainer:
             preds = trend_logits.argmax(dim=-1)
             correct += (preds == y).sum().item()
             total += len(y)
+            n_batches += 1
         
-        return {"loss": total_loss / total, "accuracy": correct / total}
+        elapsed = time.time() - epoch_start
+        return {
+            "loss": total_loss / total,
+            "accuracy": correct / total,
+            "elapsed": elapsed,
+            "it_per_sec": n_batches / elapsed if elapsed > 0 else 0,
+            "samples_per_sec": total / elapsed if elapsed > 0 else 0,
+        }
     
     def validate(self, val_loader: DataLoader) -> Dict:
         self.model.eval()
@@ -202,10 +229,14 @@ class Trainer:
                 self.patience_counter += 1
             
             if epoch % 10 == 0 or epoch == epochs - 1:
+                lr = self.optimizer.param_groups[0]['lr']
                 logger.info(
                     f"Epoch {epoch+1}/{epochs} | "
                     f"Train: {train_metrics['loss']:.4f} ({train_metrics['accuracy']:.2%}) | "
-                    f"Val: {val_metrics['loss']:.4f} ({val_metrics['accuracy']:.2%})"
+                    f"Val: {val_metrics['loss']:.4f} ({val_metrics['accuracy']:.2%}) | "
+                    f"{train_metrics['it_per_sec']:.1f} it/s, "
+                    f"{train_metrics['samples_per_sec']:.0f} samples/s | "
+                    f"LR: {lr:.2e}"
                 )
             
             if self.patience_counter >= patience:
