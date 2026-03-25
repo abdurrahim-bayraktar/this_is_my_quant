@@ -21,7 +21,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 class UltimateBacktestRunner:
-    def __init__(self, report_dir: str):
+    def __init__(self, report_dir: str, backtest_start: str = None, backtest_end: str = "2024-12-31"):
         self.report_dir = Path(report_dir)
         with open(self.report_dir / "config.json", "r") as f:
             self.config = json.load(f)
@@ -46,9 +46,13 @@ class UltimateBacktestRunner:
         
         # Dates (same as UltimateModelExperiment defaults)
         self.start_date = "2014-01-01"
-        self.end_date = "2024-12-31"
         self.train_end = pd.Timestamp("2022-01-01")
-        self.val_end = pd.Timestamp("2023-06-01")  # Test set starts here
+        self.val_end = pd.Timestamp("2023-06-01")  # Default model test set bound
+        
+        self.backtest_start = pd.Timestamp(backtest_start) if backtest_start else self.val_end
+        self.backtest_end = pd.Timestamp(backtest_end)
+        
+        self.end_date = self.backtest_end.strftime('%Y-%m-%d')
         
         self.feature_cols = self.config.get("features", SHAP_TOP20_FEATURES)
         self.indicator_computer = ComprehensiveIndicatorsV7()
@@ -108,7 +112,7 @@ class UltimateBacktestRunner:
             
             if target_date < self.train_end:
                 train_seqs.append(seq)
-            elif target_date >= self.val_end:
+            elif target_date >= self.backtest_start and target_date <= self.backtest_end:
                 test_data.append({
                     'Date': trade_date, # Date of the prediction features
                     'Sequence': seq,
@@ -211,6 +215,7 @@ class UltimateBacktestRunner:
         
         strategies = [
             ("Buy_Hold_Universe", {}),
+            ("Daily_Rebalanced_Universe", {}),
             ("Random_Allocation", {'n': 5}),
             ("Long_Top_N", {'n': 3}),
             ("Long_Top_N", {'n': 5}),
@@ -243,7 +248,9 @@ class UltimateBacktestRunner:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--report-dir", type=str, required=True, help="Path to ultimate_model report directory")
+    parser.add_argument("--start", type=str, default=None, help="Backtest start date (e.g. 2023-06-01)")
+    parser.add_argument("--end", type=str, default="2024-12-31", help="Backtest end date (e.g. 2024-12-31)")
     args = parser.parse_args()
     
-    runner = UltimateBacktestRunner(args.report_dir)
+    runner = UltimateBacktestRunner(args.report_dir, backtest_start=args.start, backtest_end=args.end)
     runner.run()

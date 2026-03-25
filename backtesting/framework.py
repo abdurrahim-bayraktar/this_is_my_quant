@@ -67,7 +67,7 @@ class Backtester:
         port_returns = []
         turnover_list = []
         
-        prev_weights = pd.Series(dtype=float)
+        holdings = pd.Series(dtype=float)
         
         for date in dates:
             day_data = df.loc[[date]] if isinstance(df.loc[date], pd.DataFrame) else df.loc[[date]].to_frame().T
@@ -103,9 +103,18 @@ class Backtester:
                 if len(selected) > 0:
                     weights[selected] = 1.0 / len(selected)
             
-            elif strategy_name == "Buy_Hold_Universe":
+            elif strategy_name == "Daily_Rebalanced_Universe":
                 selected = day_data['Ticker']
                 weights[selected] = 1.0 / len(selected)
+                
+            elif strategy_name == "Buy_Hold_Universe":
+                if holdings.empty:
+                    # Initialize equal weights on the very first day
+                    selected = day_data['Ticker']
+                    weights[selected] = 1.0 / len(selected)
+                else:
+                    # Let weights drift naturally; target exactly what we already hold
+                    weights = holdings.copy()
                 
             elif strategy_name == "Random_Allocation":
                 n = kwargs.get('n', 3)
@@ -116,19 +125,19 @@ class Backtester:
             else:
                 raise ValueError(f"Unknown strategy: {strategy_name}")
                 
-            # Align weights and prev_weights to compute turnover
-            all_tickers = set(weights.index).union(set(prev_weights.index))
-            w_curr = pd.Series({t: weights.get(t, 0.0) for t in all_tickers})
-            w_prev = pd.Series({t: prev_weights.get(t, 0.0) for t in all_tickers})
+            # Align target weights and current holdings to compute turnover
+            all_tickers = set(weights.index).union(set(holdings.index))
+            w_target = pd.Series({t: weights.get(t, 0.0) for t in all_tickers})
+            w_hold = pd.Series({t: holdings.get(t, 0.0) for t in all_tickers})
             
-            # Simplified turnover: sum of absolute weight changes
-            turnover = (w_curr - w_prev).abs().sum() / 2.0
+            # Simplified turnover: sum of absolute weight changes to reach target
+            turnover = (w_target - w_hold).abs().sum() / 2.0
             turnover_list.append(turnover)
             
             # Compute portfolio return for this day
             # Reindex day_data to match weights
             day_returns = day_data.set_index('Ticker')['Return_Next']
-            # Only count returns where we have weights
+            # Only count returns where we have targeted weights
             valid_tickers = [t for t in weights.index[weights != 0] if t in day_returns.index]
             
             w_norm = weights[valid_tickers]
@@ -138,10 +147,17 @@ class Backtester:
             port_ret = (w_norm * r_valid).sum() - (turnover * self.transaction_cost)
             port_returns.append(port_ret)
             
-            # Update prev_weights for next step
-            # Actually next day weights will drift based on return, but for daily rebalancing we 
-            # assume we rebalance completely.
-            prev_weights = weights
+            # Update holdings for next step (market drift)
+            new_holdings = w_target.copy()
+            for t in valid_tickers:
+                new_holdings[t] *= (1 + r_valid[t])
+            
+            # Normalize by total portfolio equity change to handle Long/Short correctly
+            equity_multiplier = 1.0 + port_ret
+            if equity_multiplier > 0:
+                holdings = new_holdings / equity_multiplier
+            else:
+                holdings = pd.Series(0.0, index=new_holdings.index) # bankrupt
         
         # Build history dataframe
         history = pd.DataFrame({

@@ -32,7 +32,8 @@ The framework currently simulates trading based on the 3-way prediction schema (
 - **Long_Top_N (Conviction Trading)**: Selects the Top $N$ stocks with the highest strictly predicted `Prob_Up` each day. Weights them equally.
 - **Long_Short_Neutral (Market Neutral)**: Buys the Top $N$ predicted "Up" stocks and short-sells the Top $N$ predicted "Down" stocks simultaneously, aiming for beta neutrality.
 - **Threshold_Long (Confidence)**: Buys any stock that crosses an absolute probability threshold (e.g., `> 60%`). If Neural Network probabilities are uncalibrated (highly clustered around 33-40%), this strategy may rarely trigger.
-- **Buy_Hold_Universe (Baseline)**: Buys equal weight of all available test stocks every day. Represents "general market drift" for your specific universe.
+- **Daily_Rebalanced_Universe\":** Forces the portfolio back to equal weight every day by actively trading.
+- **Buy_Hold_Universe (True Baseline)**: Buys equal weight on day 1 and lets the allocations naturally drift strictly tracking raw market trajectory. Effectively $0$ continuous turnover.
 - **Random_Allocation (Sanity Check)**: Selects $N$ random stocks daily. Crucial to ensure your Conviction Trading actually has mathematical edge over throwing darts.
 
 ## 3. Metrics
