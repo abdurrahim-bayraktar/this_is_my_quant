@@ -66,3 +66,36 @@ elif strategy_name == "My_Custom_Strategy":
 ```
 
 The `Backtester` engine will automatically handle aligning the target `weights` against the `Return_Next` outcomes and subtract standard transaction costs (configurable via `transaction_cost_bps` during `Backtester` initialization) based on daily turnover.
+
+## 5. Regression Model Backtesting
+
+For the `regression_v1` experiment (continuous return prediction), use the dedicated evaluator:
+
+**Command:**
+```bash
+python backtesting/evaluate_regression.py --report-dir reports/regression_v1_YYYYMMDD_HHMMSS
+python backtesting/evaluate_regression.py --report-dir reports/regression_v1_full_scale_20260325_140551 --start 2023-06-01 --end 2024-12-31
+```
+
+### Regression Strategies
+
+These strategies operate on the `Pred_Return` column (predicted continuous return) and use percentage-based stock selection:
+
+- **Regression_Long_Top_Pct**: Long the top X% of stocks by predicted return (default 20%). Controlled via `long_pct` parameter.
+- **Regression_Long_Short**: Long top X%, short bottom X% — market neutral. Controlled via `long_pct` and `short_pct` parameters (both default 20%).
+- **Regression_Quantile_Spread**: Long top quintile, short bottom quintile (fixed 20%/20%). Tracks the quantile spread as a portfolio return.
+- **Regression_Threshold_Long**: Long any stock whose predicted return exceeds a threshold (default 0.5%).
+
+### Cross-Sectional IC Output
+
+The evaluator produces two additional files in the report directory:
+
+- **`cross_sectional_ic.csv`**: Daily IC time series including Spearman IC, rolling 20-day IC, quantile spread (vol-adjusted and raw), and cumulative spread.
+- **`backtest_results.csv`**: Strategy comparison table with standard metrics (Sharpe, Sortino, Max Drawdown, etc.) for both regression and baseline strategies.
+
+Key IC metrics reported:
+- **Mean IC**: Average daily cross-sectional Spearman rank correlation
+- **IC IR**: Information Ratio (mean / std of daily IC) — measures ranking consistency
+- **IC Hit Rate**: Percentage of days with positive IC
+- **Quantile Spread**: Difference in returns between top and bottom quintiles
+

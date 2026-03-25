@@ -122,6 +122,56 @@ class Backtester:
                 np.random.seed(hash(str(date)) % 2**32)
                 selected = np.random.choice(day_data['Ticker'], min(n, len(day_data)), replace=False)
                 weights[selected] = 1.0 / len(selected)
+
+            # === REGRESSION STRATEGIES (use 'Pred_Return' column) ===
+            # These strategies rank stocks by predicted continuous return.
+            # long_pct / short_pct control what % of the universe to trade (default 20%).
+
+            elif strategy_name == "Regression_Long_Top_Pct":
+                # Long the top X% of stocks by predicted return
+                pct = kwargs.get('long_pct', 0.20)
+                n = max(1, int(len(day_data) * pct))
+                top = day_data.nlargest(n, 'Pred_Return')['Ticker']
+                if not top.empty:
+                    weights[top] = 1.0 / len(top)
+
+            elif strategy_name == "Regression_Long_Short":
+                # Long top X%, short bottom X% — market neutral
+                long_pct = kwargs.get('long_pct', 0.20)
+                short_pct = kwargs.get('short_pct', 0.20)
+                n_long = max(1, int(len(day_data) * long_pct))
+                n_short = max(1, int(len(day_data) * short_pct))
+                top = day_data.nlargest(n_long, 'Pred_Return')['Ticker']
+                bottom = day_data.nsmallest(n_short, 'Pred_Return')['Ticker']
+                # Remove any overlap
+                overlap = set(top).intersection(set(bottom))
+                top = top[~top.isin(overlap)]
+                bottom = bottom[~bottom.isin(overlap)]
+                if len(top) > 0 and len(bottom) > 0:
+                    weights[top] = 0.5 / len(top)
+                    weights[bottom] = -0.5 / len(bottom)
+
+            elif strategy_name == "Regression_Quantile_Spread":
+                # Long top quintile, short bottom quintile (20% each)
+                # This is essentially Long_Short with fixed 20/20 — used for
+                # tracking the quantile spread as a portfolio return.
+                n_q = max(1, len(day_data) // 5)
+                top = day_data.nlargest(n_q, 'Pred_Return')['Ticker']
+                bottom = day_data.nsmallest(n_q, 'Pred_Return')['Ticker']
+                overlap = set(top).intersection(set(bottom))
+                top = top[~top.isin(overlap)]
+                bottom = bottom[~bottom.isin(overlap)]
+                if len(top) > 0 and len(bottom) > 0:
+                    weights[top] = 0.5 / len(top)
+                    weights[bottom] = -0.5 / len(bottom)
+
+            elif strategy_name == "Regression_Threshold_Long":
+                # Long any stock whose predicted return exceeds a threshold
+                threshold = kwargs.get('threshold', 0.005)  # default 0.5%
+                selected = day_data[day_data['Pred_Return'] > threshold]['Ticker']
+                if len(selected) > 0:
+                    weights[selected] = 1.0 / len(selected)
+
             else:
                 raise ValueError(f"Unknown strategy: {strategy_name}")
                 
