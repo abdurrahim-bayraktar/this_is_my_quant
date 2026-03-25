@@ -21,21 +21,33 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 class UltimateBacktestRunner:
-    def __init__(self, report_dir: str, backtest_start: str = None, backtest_end: str = "2024-12-31"):
+    def __init__(self, report_dir: str, backtest_start: str = None, backtest_end: str = "2024-12-31", top_n_test_stocks: int = None):
         self.report_dir = Path(report_dir)
         with open(self.report_dir / "config.json", "r") as f:
             self.config = json.load(f)
             
         self.train_stock_count = self.config.get("train_stock_count", 400)
-        self.test_stocks = self.config.get("test_stocks", [])
+        self.top_n_test_stocks = top_n_test_stocks
+        original_test_stocks = self.config.get("test_stocks", [])
         
-        # Load EXTENDED_TICKERS from ranked_tickers to reconstruct train_stocks
+        # Reconstruct train_stocks exactly as they were during training
         try:
             from experiments.ranked_tickers import EXTENDED_TICKERS
             all_train = EXTENDED_TICKERS[:self.train_stock_count]
-            self.train_stocks = [t for t in all_train if t not in self.test_stocks]
+            # Exclude original_test_stocks to perfectly match training scaler
+            self.train_stocks = [t for t in all_train if t not in original_test_stocks]
+            
+            # Now set the actual test_stocks for evaluation
+            if self.top_n_test_stocks is not None:
+                self.test_stocks = EXTENDED_TICKERS[:self.top_n_test_stocks]
+                logger.info(f"Overriding test_stocks with top {self.top_n_test_stocks} from ranked_tickers.py")
+            else:
+                self.test_stocks = original_test_stocks
         except ImportError:
-            logger.warning("Could not import EXTENDED_TICKERS, using test_stocks only for testing.")
+            logger.warning("Could not import EXTENDED_TICKERS, using test_stocks from config only.")
+            if self.top_n_test_stocks is not None:
+                logger.warning("Cannot use --top-n-test-stocks without ranked_tickers.py")
+            self.test_stocks = original_test_stocks
             self.train_stocks = []
             
         self.frequency = self.config.get("frequency", "daily")
@@ -250,7 +262,13 @@ if __name__ == "__main__":
     parser.add_argument("--report-dir", type=str, required=True, help="Path to ultimate_model report directory")
     parser.add_argument("--start", type=str, default=None, help="Backtest start date (e.g. 2023-06-01)")
     parser.add_argument("--end", type=str, default="2024-12-31", help="Backtest end date (e.g. 2024-12-31)")
+    parser.add_argument("--top-n-test-stocks", type=int, default=None, help="Override test set with top N stocks from ranked_tickers.py")
     args = parser.parse_args()
     
-    runner = UltimateBacktestRunner(args.report_dir, backtest_start=args.start, backtest_end=args.end)
+    runner = UltimateBacktestRunner(
+        args.report_dir, 
+        backtest_start=args.start, 
+        backtest_end=args.end,
+        top_n_test_stocks=args.top_n_test_stocks
+    )
     runner.run()
