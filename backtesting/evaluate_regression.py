@@ -471,7 +471,12 @@ class RegressionBacktestRunner:
         # For baseline strategies that don't use Prob_Up, we can pass dummy columns.
         baseline_df = preds_df.copy()
         baseline_df['Prob_Up'] = 0.33
-        baseline_df['Prob_Down'] = 0.33
+        # Ensure plots directory exists
+        plots_dir = self.report_dir / "plots"
+        plots_dir.mkdir(exist_ok=True)
+        
+        # Import plotting functions inline to avoid circular imports if any
+        from src.evaluation.plots import plot_portfolio_composition, plot_trade_activity
 
         results = []
         for strat_name, kwargs in strategies:
@@ -485,12 +490,31 @@ class RegressionBacktestRunner:
             if kwargs:
                 param_str = ", ".join(f"{k}={v}" for k, v in kwargs.items())
                 label = f"{strat_name} ({param_str})"
+                
+            # Safely create filename from label, replacing problematic characters
+            safe_label = label.replace("(", "").replace(")", "").replace(", ", "_").replace("=", "")
 
             logger.info(f"  Running: {label}")
             try:
-                metrics, history = backtester.run_strategy(sim_df, strat_name, **kwargs)
+                metrics, history, holdings_df, trades_df = backtester.run_strategy(sim_df, strat_name, **kwargs)
                 metrics['Strategy'] = label
                 results.append(metrics)
+                
+                # Save holding and trade logs
+                if not holdings_df.empty:
+                    out_holdings = self.report_dir / f"{safe_label}_holdings.csv"
+                    holdings_df.to_csv(out_holdings, index=False)
+                    
+                    # Generate plot
+                    plot_portfolio_composition(holdings_df, label, plots_dir / f"{safe_label}_composition.png")
+                    
+                if not trades_df.empty:
+                    out_trades = self.report_dir / f"{safe_label}_trades.csv"
+                    trades_df.to_csv(out_trades, index=False)
+                    
+                    # Generate plot
+                    plot_trade_activity(trades_df, label, plots_dir / f"{safe_label}_activity.png")
+                    
             except Exception as e:
                 logger.warning(f"  Strategy {label} failed: {e}")
 

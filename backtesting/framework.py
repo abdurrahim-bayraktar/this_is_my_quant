@@ -69,6 +69,10 @@ class Backtester:
         
         holdings = pd.Series(dtype=float)
         
+        # New tracking for holdings and trades
+        daily_holdings = []
+        daily_trades = []
+        
         for date in dates:
             day_data = df.loc[[date]] if isinstance(df.loc[date], pd.DataFrame) else df.loc[[date]].to_frame().T
             
@@ -180,6 +184,20 @@ class Backtester:
             w_target = pd.Series({t: weights.get(t, 0.0) for t in all_tickers})
             w_hold = pd.Series({t: holdings.get(t, 0.0) for t in all_tickers})
             
+            # Record Trades
+            trade_weights = w_target - w_hold
+            for t, tw in trade_weights.items():
+                if abs(tw) > 1e-6:
+                    direction = "Buy" if tw > 0 else "Sell"
+                    daily_trades.append({
+                        'Date': date, 'Ticker': t, 'Trade_Weight': tw, 'Direction': direction
+                    })
+                    
+            # Record Holdings
+            for t, w in w_target.items():
+                if abs(w) > 1e-6:
+                    daily_holdings.append({'Date': date, 'Ticker': t, 'Weight': w})
+            
             # Simplified turnover: sum of absolute weight changes to reach target
             turnover = (w_target - w_hold).abs().sum() / 2.0
             turnover_list.append(turnover)
@@ -218,6 +236,10 @@ class Backtester:
         history.set_index("Date", inplace=True)
         history["Equity"] = self.initial_capital * (1 + history["Portfolio_Return"]).cumprod()
         
+        # Build holdings and trades dataframes
+        holdings_df = pd.DataFrame(daily_holdings) if daily_holdings else pd.DataFrame(columns=['Date', 'Ticker', 'Weight'])
+        trades_df = pd.DataFrame(daily_trades) if daily_trades else pd.DataFrame(columns=['Date', 'Ticker', 'Trade_Weight', 'Direction'])
+        
         # Filter 0s to avoid div/0 in metrics
         metrics = self._compute_metrics(history["Portfolio_Return"])
         
@@ -225,4 +247,4 @@ class Backtester:
         metrics["Total Turnover"] = total_turnover
         metrics["Total Tx Cost (%)"] = total_turnover * self.transaction_cost
         
-        return metrics, history
+        return metrics, history, holdings_df, trades_df

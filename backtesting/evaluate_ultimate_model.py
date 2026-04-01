@@ -236,14 +236,37 @@ class UltimateBacktestRunner:
             ("Threshold_Long", {'threshold': 0.70}),
         ]
         
+        # Ensure plots directory exists
+        plots_dir = self.report_dir / "plots"
+        plots_dir.mkdir(exist_ok=True)
+        
+        from src.evaluation.plots import plot_portfolio_composition, plot_trade_activity
+        
         results = []
         for strat_name, kwargs in strategies:
             logger.info(f"Running strategy: {strat_name} {kwargs}")
-            metrics, _ = backtester.run_strategy(preds_df, strat_name, **kwargs)
-            metrics['Strategy'] = f"{strat_name}_{list(kwargs.values())}" if kwargs else strat_name
-            results.append(metrics)
             
-        results_df = pd.DataFrame(results)
+            label = f"{strat_name}_{list(kwargs.values())}" if kwargs else strat_name
+            safe_label = label.replace("[", "").replace("]", "").replace(", ", "_").replace("'", "")
+            
+            try:
+                metrics, history, holdings_df, trades_df = backtester.run_strategy(preds_df, strat_name, **kwargs)
+                metrics['Strategy'] = label
+                results.append(metrics)
+                
+                # Save detailed logs
+                if not holdings_df.empty:
+                    holdings_df.to_csv(self.report_dir / f"{safe_label}_holdings.csv", index=False)
+                    plot_portfolio_composition(holdings_df, label, plots_dir / f"{safe_label}_composition.png")
+                    
+                if not trades_df.empty:
+                    trades_df.to_csv(self.report_dir / f"{safe_label}_trades.csv", index=False)
+                    plot_trade_activity(trades_df, label, plots_dir / f"{safe_label}_activity.png")
+            except Exception as e:
+                logger.warning(f"  Strategy {label} failed: {e}")
+            
+        if results:
+            results_df = pd.DataFrame(results)
         cols = ['Strategy'] + [c for c in results_df.columns if c != 'Strategy']
         results_df = results_df[cols]
         
