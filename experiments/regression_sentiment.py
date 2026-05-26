@@ -673,11 +673,11 @@ class RegressionSentimentExperiment:
         self.config = config
         self.use_sentiment = config.get("use_sentiment", True)
 
-        # Temporal splits (within sentiment era)
-        self.start_date = config.get("start_date", "2020-01-01")
-        self.end_date = config.get("end_date", "2024-12-31")
-        self.train_end = pd.Timestamp(config.get("train_end", "2023-04-01"))
-        self.val_end = pd.Timestamp(config.get("val_end", "2023-08-01"))
+        # Temporal splits (aligned with the dense FNSPID sentiment era: 2012-2019)
+        self.start_date = config.get("start_date", "2012-01-01")
+        self.end_date = config.get("end_date", "2019-12-31")
+        self.train_end = pd.Timestamp(config.get("train_end", "2017-01-01"))
+        self.val_end = pd.Timestamp(config.get("val_end", "2018-01-01"))
 
         # Always determine available tickers based on sentiment coverage
         # to ensure fair comparison between sentiment and no-sentiment runs.
@@ -1241,10 +1241,10 @@ def main():
     parser.add_argument("--no-cache", action="store_true")
     parser.add_argument("--name", type=str, default="regression_sentiment", help="Experiment name")
     # Temporal split overrides
-    parser.add_argument("--start-date", type=str, default="2020-01-01")
-    parser.add_argument("--end-date", type=str, default="2024-12-31")
-    parser.add_argument("--train-end", type=str, default="2023-04-01")
-    parser.add_argument("--val-end", type=str, default="2023-08-01")
+    parser.add_argument("--start-date", type=str, default="2012-01-01")
+    parser.add_argument("--end-date", type=str, default="2019-12-31")
+    parser.add_argument("--train-end", type=str, default="2017-01-01")
+    parser.add_argument("--val-end", type=str, default="2018-01-01")
     args = parser.parse_args()
 
     config = {
