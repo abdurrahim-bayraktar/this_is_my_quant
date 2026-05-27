@@ -1,22 +1,33 @@
 """
-Regression with Sentiment — Volatility-Adjusted Forward Return + FNSPID News.
+Regression with Sentiment — Walk-Forward (Rolling-Origin) Validation.
 
 Extends regression_v1 by adding RF-selected sentiment features from the
 FNSPID dataset alongside the SHAP Top 20 technical indicators.
 
+Walk-forward validation simulates realistic deployment:
+  - Each fold trains on ALL data up to the fold's start (expanding window)
+  - Validates on a single quarter (e.g., Q1 2017)
+  - A FRESH model is trained per fold — no warm-starting
+
+This prevents the severe accuracy degradation seen with static splits where
+the model is trained once on 2012–2017 and then deployed over a long
+unseen future (2018–2019).
+
 Key design decisions:
   - Training universe restricted to tickers with sentiment coverage
   - Date range: 2012–2019 (aligned with dense FNSPID sentiment era)
-  - Temporal splits: train <2017-01, val <2018-01, test >=2018-01
+  - Walk-forward folds: quarterly expanding window (12 folds over 2017–2019)
   - 2 sentiment features selected by RandomForest permutation importance:
     sent_count_log, sent_strength
     (out of 8 candidates; other 6 disabled to reduce noise)
   - No-news days filled via exponential decay (sentiment fades, doesn't vanish)
 
 Usage:
-    python experiments/regression_sentiment.py --epochs 100
-    python experiments/regression_sentiment.py --epochs 2 --name smoke_test  # smoke test
-    python experiments/regression_sentiment.py --no-sentiment --name baseline  # A/B comparison
+    python experiments/regression_sentiment_v2_rolling.py --epochs 100
+    python experiments/regression_sentiment_v2_rolling.py --epochs 2 --name wf_smoke  # smoke test
+    python experiments/regression_sentiment_v2_rolling.py --no-sentiment --name wf_baseline  # A/B
+    python experiments/regression_sentiment_v2_rolling.py --wf-step QS  # quarterly (default)
+    python experiments/regression_sentiment_v2_rolling.py --wf-step MS  # monthly (36 folds)
 """
 
 import sys
@@ -279,50 +290,64 @@ def rank_tickers_by_density(
 
 
 # ============================================================================
-# LOCAL create_sequences FOR REGRESSION (float32 labels)
+# WALK-FORWARD SEQUENCE UTILITIES (float32 labels for regression)
 # ============================================================================
 
-def create_sequences_regression(
+def create_sequences_for_period_regression(
     feature_data: np.ndarray,
     targets: np.ndarray,
     dates: pd.DatetimeIndex,
     seq_length: int,
-    train_end: pd.Timestamp,
-    val_end: pd.Timestamp,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    period_start: pd.Timestamp,
+    period_end: pd.Timestamp,
+) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Create windowed sequences with temporal split for regression.
+    Create windowed sequences for a specific date period (regression variant).
 
-    Same as src.data.utils.create_sequences but returns float32 labels
-    instead of int64 (needed for continuous regression targets).
+    Sequences whose TARGET date falls in [period_start, period_end) are included.
+    The lookback window naturally extends before period_start.
+
+    Returns float32 labels (continuous regression targets).
     """
-    X_train, y_train = [], []
-    X_val, y_val = [], []
-    X_test, y_test = [], []
+    X_list, y_list = [], []
 
     for i in range(len(feature_data) - seq_length):
         target_date = dates[i + seq_length]
-        seq = feature_data[i:i + seq_length]
-        target = targets[i + seq_length - 1]
+        if period_start <= target_date < period_end:
+            X_list.append(feature_data[i:i + seq_length])
+            y_list.append(targets[i + seq_length - 1])
 
-        if target_date < train_end:
-            X_train.append(seq)
-            y_train.append(target)
-        elif target_date < val_end:
-            X_val.append(seq)
-            y_val.append(target)
-        else:
-            X_test.append(seq)
-            y_test.append(target)
+    if X_list:
+        return np.array(X_list, dtype=np.float32), np.array(y_list, dtype=np.float32)
+    return np.array([], dtype=np.float32), np.array([], dtype=np.float32)
 
-    def _to_array(lst, dtype):
-        return np.array(lst, dtype=dtype) if lst else np.array([])
 
-    return (
-        _to_array(X_train, np.float32), _to_array(y_train, np.float32),
-        _to_array(X_val, np.float32), _to_array(y_val, np.float32),
-        _to_array(X_test, np.float32), _to_array(y_test, np.float32),
-    )
+def create_sequences_for_period_with_dates(
+    feature_data: np.ndarray,
+    targets: np.ndarray,
+    dates: pd.DatetimeIndex,
+    seq_length: int,
+    period_start: pd.Timestamp,
+    period_end: pd.Timestamp,
+) -> Tuple[np.ndarray, np.ndarray, List]:
+    """
+    Like create_sequences_for_period_regression but also returns target dates.
+    Used for cross-sectional IC computation.
+    """
+    X_list, y_list, date_list = [], [], []
+
+    for i in range(len(feature_data) - seq_length):
+        target_date = dates[i + seq_length]
+        if period_start <= target_date < period_end:
+            X_list.append(feature_data[i:i + seq_length])
+            y_list.append(targets[i + seq_length - 1])
+            date_list.append(target_date)
+
+    if X_list:
+        return (np.array(X_list, dtype=np.float32),
+                np.array(y_list, dtype=np.float32),
+                date_list)
+    return np.array([], dtype=np.float32), np.array([], dtype=np.float32), []
 
 
 # ============================================================================
@@ -706,28 +731,36 @@ class RegressionTrainer:
 
 class RegressionSentimentExperiment:
     """
-    Regression experiment with FNSPID sentiment features.
+    Walk-forward regression experiment with FNSPID sentiment features.
 
     Pipeline:
     1. Load sentiment data from cached parquets
     2. Load price data (only for tickers with sentiment)
-    3. Compute SHAP Top 20 features + 7 sentiment features
+    3. Compute SHAP Top 20 features + 2 sentiment features
     4. Create regression target: vol-adjusted forward return
-    5. Pool all stocks, temporal split (within sentiment-covered period)
-    6. Train RegressionAttentionLSTM with Huber loss
-    7. Evaluate: pooled test + per-stock test + cross-sectional IC
-    8. Save config.json + summary.csv + per_stock_results.csv + model.pt
+    5. Walk-forward: for each quarterly fold:
+       a. Slice train = [start, fold_start), val = [fold_start, fold_end)
+       b. Fit fresh scaler on train
+       c. Train fresh RegressionAttentionLSTM with Huber loss
+       d. Evaluate on val → store predictions
+    6. Aggregate all fold predictions → compute overall metrics
+    7. Cross-sectional IC across all folds
+    8. Per-stock evaluation using the final (most recent) fold's model
+    9. Save config.json + summary.csv + per_fold_results.csv + per_stock_results.csv + model.pt
     """
 
     def __init__(self, config: Dict):
         self.config = config
         self.use_sentiment = config.get("use_sentiment", True)
 
-        # Temporal splits (aligned with the dense FNSPID sentiment era: 2012-2019)
+        # Date range (aligned with the dense FNSPID sentiment era: 2012-2019)
         self.start_date = config.get("start_date", "2012-01-01")
         self.end_date = config.get("end_date", "2019-12-31")
-        self.train_end = pd.Timestamp(config.get("train_end", "2017-01-01"))
-        self.val_end = pd.Timestamp(config.get("val_end", "2018-01-01"))
+
+        # Walk-forward parameters
+        self.wf_val_start = pd.Timestamp(config.get("wf_val_start", "2017-01-01"))
+        self.wf_val_end = pd.Timestamp(config.get("wf_val_end", "2019-12-31"))
+        self.wf_step = config.get("wf_step", "QS")  # QS=quarterly, MS=monthly
 
         self.max_tickers = config.get("max_tickers", DEFAULT_MAX_TICKERS)
 
@@ -741,14 +774,14 @@ class RegressionSentimentExperiment:
         else:
             logger.info(f"Tickers with sentiment available (post-exclusion): {len(_sentiment_data)}")
 
-            # Rank by density using ONLY the training period to avoid
+            # Rank by density using ONLY the pre-validation period to avoid
             # look-ahead bias (val/test coverage must not influence selection)
             ranked = rank_tickers_by_density(
-                _sentiment_data, self.start_date, str(self.train_end.date())
+                _sentiment_data, self.start_date, str(self.wf_val_start.date())
             )
             available_sent_tickers = ranked[:self.max_tickers]
             logger.info(f"Using top {len(available_sent_tickers)} densest tickers "
-                        f"(max={self.max_tickers}, ranked on train period only)")
+                        f"(max={self.max_tickers}, ranked on pre-val period only)")
 
         # Keep or discard sentiment data based on mode
         if self.use_sentiment:
@@ -795,13 +828,41 @@ class RegressionSentimentExperiment:
             self.feature_cols = list(self.technical_cols)
 
         # Output directory
-        exp_name = config.get("experiment_name", "regression_sentiment")
+        exp_name = config.get("experiment_name", "wf_regression_sentiment")
         self.output_dir = REPORTS_DIR / f"{exp_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         self.indicator_computer = ComprehensiveIndicatorsV7()
         self.cache = PriceCache()
-        self.scaler = None
+        self.scaler = None  # Will hold the LAST fold's scaler for per-stock eval
+
+    def _generate_walk_forward_folds(self) -> List[Tuple[pd.Timestamp, pd.Timestamp]]:
+        """
+        Generate walk-forward fold boundaries.
+
+        Returns list of (fold_start, fold_end) tuples. Each fold's training data
+        is [self.start_date, fold_start) and validation data is [fold_start, fold_end).
+
+        With QS (quarterly): ~12 folds over 2017–2019
+        With MS (monthly):   ~36 folds over 2017–2019
+        """
+        fold_starts = pd.date_range(
+            start=self.wf_val_start,
+            end=self.wf_val_end,
+            freq=self.wf_step,
+        )
+
+        folds = []
+        for i in range(len(fold_starts)):
+            fold_start = fold_starts[i]
+            if i + 1 < len(fold_starts):
+                fold_end = fold_starts[i + 1]
+            else:
+                # Last fold: extend to the overall end date
+                fold_end = pd.Timestamp(self.end_date) + pd.Timedelta(days=1)
+            folds.append((fold_start, fold_end))
+
+        return folds
 
     def load_data(self) -> Dict[str, pd.DataFrame]:
         """Load all stock data."""
@@ -851,8 +912,16 @@ class RegressionSentimentExperiment:
 
         return df
 
-    def prepare_stock(self, df: pd.DataFrame, ticker: str = "") -> Tuple:
-        """Compute features, create vol-adjusted return target, and build sequences."""
+    def prepare_stock_features(self, df: pd.DataFrame, ticker: str = "") -> Tuple:
+        """
+        Compute features and vol-adjusted return target for a stock's full date range.
+
+        Returns raw (feature_data, targets, dates) WITHOUT splitting into
+        train/val/test. Splitting is done per-fold by the walk-forward loop.
+
+        Returns:
+            (feature_data, targets, dates) or (empty, empty, empty) on failure.
+        """
         df = self.indicator_computer.compute_shap_top20(df)
 
         # Merge sentiment
@@ -860,7 +929,7 @@ class RegressionSentimentExperiment:
 
         available = [c for c in self.feature_cols if c in df.columns]
         if len(available) < 5:
-            return tuple(np.array([]) for _ in range(6))
+            return np.array([]), np.array([]), pd.DatetimeIndex([])
 
         # Volatility-adjusted forward return
         df['return_next'] = df['Close'].pct_change().shift(-1)
@@ -870,126 +939,103 @@ class RegressionSentimentExperiment:
 
         df = df.dropna(subset=['vol_adj_return'] + available[:5])
         if len(df) < self.sequence_length + 10:
-            return tuple(np.array([]) for _ in range(6))
+            return np.array([]), np.array([]), pd.DatetimeIndex([])
 
         feature_data = df[available].values
         feature_data = np.nan_to_num(feature_data, nan=0.0, posinf=0.0, neginf=0.0)
         targets = df['vol_adj_return'].values.astype(np.float32)
 
-        return create_sequences_regression(
-            feature_data, targets, df.index,
-            self.sequence_length, self.train_end, self.val_end,
-        )
+        return feature_data, targets, df.index
 
-    def prepare_stock_with_dates(self, df: pd.DataFrame, ticker: str = "") -> Tuple:
+    def prepare_all_stock_features(
+        self, stock_data: Dict, tickers: List[str]
+    ) -> Dict[str, Tuple]:
         """
-        Like prepare_stock but also returns test dates for cross-sectional IC.
-        Returns (X_tr, y_tr, X_val, y_val, X_te, y_te, test_dates).
+        Pre-compute features for all tickers (done once, reused across folds).
+
+        Returns {ticker: (feature_data, targets, dates)} for tickers that
+        have enough data.
         """
-        df = self.indicator_computer.compute_shap_top20(df)
-        df = self._merge_sentiment(df, ticker)
-
-        available = [c for c in self.feature_cols if c in df.columns]
-        if len(available) < 5:
-            return tuple(np.array([]) for _ in range(7))
-
-        df['return_next'] = df['Close'].pct_change().shift(-1)
-        df['rolling_vol'] = df['Close'].pct_change().rolling(self.vol_lookback).std()
-        df['vol_adj_return'] = df['return_next'] / df['rolling_vol']
-        df['vol_adj_return'] = df['vol_adj_return'].clip(-self.target_clip, self.target_clip)
-
-        df = df.dropna(subset=['vol_adj_return'] + available[:5])
-        if len(df) < self.sequence_length + 10:
-            return tuple(np.array([]) for _ in range(7))
-
-        feature_data = df[available].values
-        feature_data = np.nan_to_num(feature_data, nan=0.0, posinf=0.0, neginf=0.0)
-        targets = df['vol_adj_return'].values.astype(np.float32)
-        dates = df.index
-
-        # Build sequences manually to capture test dates
-        X_test_list, y_test_list, test_dates_list = [], [], []
-        X_train_list, y_train_list = [], []
-        X_val_list, y_val_list = [], []
-
-        for i in range(len(feature_data) - self.sequence_length):
-            target_date = dates[i + self.sequence_length]
-            seq = feature_data[i:i + self.sequence_length]
-            target = targets[i + self.sequence_length - 1]
-
-            if target_date < self.train_end:
-                X_train_list.append(seq)
-                y_train_list.append(target)
-            elif target_date < self.val_end:
-                X_val_list.append(seq)
-                y_val_list.append(target)
-            else:
-                X_test_list.append(seq)
-                y_test_list.append(target)
-                test_dates_list.append(target_date)
-
-        def _to_array(lst, dtype):
-            return np.array(lst, dtype=dtype) if lst else np.array([])
-
-        return (
-            _to_array(X_train_list, np.float32), _to_array(y_train_list, np.float32),
-            _to_array(X_val_list, np.float32), _to_array(y_val_list, np.float32),
-            _to_array(X_test_list, np.float32), _to_array(y_test_list, np.float32),
-            test_dates_list,
-        )
-
-    def prepare_pooled_data(self, stock_data: Dict, tickers: List[str]) -> Tuple:
-        """Prepare pooled train/val/test arrays from multiple stocks."""
-        all_train_X, all_train_y = [], []
-        all_val_X, all_val_y = [], []
-        all_test_X, all_test_y = [], []
+        prepared = {}
         n_features = None
 
-        stocks = {t: stock_data[t] for t in tickers if t in stock_data}
-
-        for ticker, df in tqdm(stocks.items(), desc="Processing stocks"):
+        for ticker in tqdm(tickers, desc="Computing features"):
+            if ticker not in stock_data:
+                continue
             try:
-                X_tr, y_tr, X_val, y_val, X_te, y_te = self.prepare_stock(df, ticker)
-
-                if len(X_tr) == 0:
+                feat, tgt, dates = self.prepare_stock_features(
+                    stock_data[ticker], ticker
+                )
+                if len(feat) == 0:
                     continue
 
                 if n_features is None:
-                    n_features = X_tr.shape[-1]
-                elif X_tr.shape[-1] != n_features:
+                    n_features = feat.shape[-1]
+                elif feat.shape[-1] != n_features:
                     continue
 
-                all_train_X.append(X_tr)
-                all_train_y.append(y_tr)
-                if len(X_val) > 0:
-                    all_val_X.append(X_val)
-                    all_val_y.append(y_val)
-                if len(X_te) > 0:
-                    all_test_X.append(X_te)
-                    all_test_y.append(y_te)
-
+                prepared[ticker] = (feat, tgt, dates)
             except Exception as e:
                 logger.warning(f"Failed {ticker}: {e}")
 
+        logger.info(f"Prepared features for {len(prepared)} tickers, "
+                    f"{n_features} features each")
+        return prepared
+
+    def _build_fold_data(
+        self,
+        prepared: Dict[str, Tuple],
+        train_start: pd.Timestamp,
+        train_end: pd.Timestamp,
+        val_start: pd.Timestamp,
+        val_end: pd.Timestamp,
+    ) -> Tuple:
+        """
+        Build pooled train and val arrays for a single walk-forward fold.
+
+        Returns:
+            (X_train, y_train, X_val, y_val, n_features)
+        """
+        all_train_X, all_train_y = [], []
+        all_val_X, all_val_y = [], []
+
+        for ticker, (feat, tgt, dates) in prepared.items():
+            # Training sequences
+            X_tr, y_tr = create_sequences_for_period_regression(
+                feat, tgt, dates, self.sequence_length,
+                train_start, train_end,
+            )
+            if len(X_tr) > 0:
+                all_train_X.append(X_tr)
+                all_train_y.append(y_tr)
+
+            # Validation sequences
+            X_val, y_val = create_sequences_for_period_regression(
+                feat, tgt, dates, self.sequence_length,
+                val_start, val_end,
+            )
+            if len(X_val) > 0:
+                all_val_X.append(X_val)
+                all_val_y.append(y_val)
+
+        if not all_train_X or not all_val_X:
+            return (np.array([]), np.array([]),
+                    np.array([]), np.array([]), 0)
+
         X_train = np.concatenate(all_train_X, axis=0)
         y_train = np.concatenate(all_train_y, axis=0)
-        X_val = np.concatenate(all_val_X) if all_val_X else np.array([])
-        y_val = np.concatenate(all_val_y) if all_val_y else np.array([])
-        X_test = np.concatenate(all_test_X) if all_test_X else np.array([])
-        y_test = np.concatenate(all_test_y) if all_test_y else np.array([])
+        X_val = np.concatenate(all_val_X, axis=0)
+        y_val = np.concatenate(all_val_y, axis=0)
+        n_features = X_train.shape[-1]
 
-        logger.info(f"Train: {len(X_train):,}, Val: {len(X_val):,}, Test: {len(X_test):,}, Features: {n_features}")
-        logger.info(f"Target stats (train): mean={y_train.mean():.4f}, std={y_train.std():.4f}, "
-                     f"min={y_train.min():.4f}, max={y_train.max():.4f}")
+        return X_train, y_train, X_val, y_val, n_features
 
-        return X_train, y_train, X_val, y_val, X_test, y_test, n_features
-
-    def scale_data(self, X_train, X_val, X_test):
-        """Fit scaler on train, transform all splits."""
+    def _scale_data(self, X_train, X_val):
+        """Fit a fresh scaler on train, transform both splits. Returns (X_train_s, X_val_s, scaler)."""
         n_train, seq_len, n_features = X_train.shape
 
-        self.scaler = StandardScaler()
-        X_train_s = self.scaler.fit_transform(X_train.reshape(-1, n_features))
+        scaler = StandardScaler()
+        X_train_s = scaler.fit_transform(X_train.reshape(-1, n_features))
         X_train_s = np.nan_to_num(X_train_s, nan=0.0, posinf=0.0, neginf=0.0)
         X_train_s = X_train_s.reshape(n_train, seq_len, n_features)
 
@@ -997,25 +1043,37 @@ class RegressionSentimentExperiment:
             if len(X) == 0:
                 return X
             s = X.shape
-            X_t = self.scaler.transform(X.reshape(-1, n_features))
+            X_t = scaler.transform(X.reshape(-1, n_features))
             return np.nan_to_num(X_t, nan=0.0, posinf=0.0, neginf=0.0).reshape(s)
 
-        return X_train_s, _transform(X_val), _transform(X_test)
+        return X_train_s, _transform(X_val), scaler
 
-    def evaluate_single_stock(self, model, stock_data, ticker) -> Dict:
-        """Evaluate regression model on a single held-out stock's test data."""
+    def evaluate_single_stock(self, model, stock_data, ticker, scaler) -> Dict:
+        """Evaluate regression model on a single stock using the final fold's scaler."""
         if ticker not in stock_data:
             return {"ticker": ticker, "error": "Not found"}
 
-        _, _, _, _, X_test, y_test = self.prepare_stock(stock_data[ticker], ticker)
+        feat, tgt, dates = self.prepare_stock_features(stock_data[ticker], ticker)
+
+        if len(feat) == 0:
+            return {"ticker": ticker, "error": "No data"}
+
+        # Use the last fold's validation period for per-stock eval
+        folds = self._generate_walk_forward_folds()
+        last_fold_start, last_fold_end = folds[-1]
+
+        X_test, y_test = create_sequences_for_period_regression(
+            feat, tgt, dates, self.sequence_length,
+            last_fold_start, last_fold_end,
+        )
 
         if len(X_test) == 0:
-            return {"ticker": ticker, "error": "No test data"}
+            return {"ticker": ticker, "error": "No test data in last fold"}
 
-        # Scale with training scaler
-        n, seq, feat = X_test.shape
-        X_scaled = self.scaler.transform(X_test.reshape(-1, feat))
-        X_scaled = np.nan_to_num(X_scaled, nan=0.0, posinf=0.0, neginf=0.0).reshape(n, seq, feat)
+        # Scale with the provided scaler
+        n, seq, f = X_test.shape
+        X_scaled = scaler.transform(X_test.reshape(-1, f))
+        X_scaled = np.nan_to_num(X_scaled, nan=0.0, posinf=0.0, neginf=0.0).reshape(n, seq, f)
 
         metrics = evaluate_regression_model(model, X_scaled, y_test)
         metrics["ticker"] = ticker
@@ -1023,59 +1081,53 @@ class RegressionSentimentExperiment:
         metrics.pop("predictions", None)
         return metrics
 
-    def evaluate_cross_sectional(self, model, stock_data, tickers: List[str]) -> Dict:
+    def evaluate_cross_sectional_walkforward(
+        self,
+        prepared: Dict[str, Tuple],
+        model: nn.Module,
+        scaler: StandardScaler,
+        val_start: pd.Timestamp,
+        val_end: pd.Timestamp,
+    ) -> Dict[str, Dict]:
         """
-        Run cross-sectional IC evaluation.
-
-        For each test date, gather predictions across all available stocks,
-        then compute rank correlation with actual vol-adj returns.
+        Build per-stock predictions for a single fold's val period.
+        Returns {ticker: {dates, predictions, actuals}} for cross-sectional IC.
         """
+        device = next(model.parameters()).device
         per_stock_predictions = {}
 
-        for ticker in tqdm(tickers, desc="Cross-sectional eval"):
-            if ticker not in stock_data:
+        for ticker, (feat, tgt, dates) in prepared.items():
+            X_val, y_val, val_dates = create_sequences_for_period_with_dates(
+                feat, tgt, dates, self.sequence_length,
+                val_start, val_end,
+            )
+
+            if len(X_val) == 0:
                 continue
 
-            try:
-                result = self.prepare_stock_with_dates(stock_data[ticker], ticker)
-                if len(result) != 7:
-                    continue
-                _, _, _, _, X_te, y_te, test_dates = result
+            # Scale
+            n, seq, f = X_val.shape
+            X_scaled = scaler.transform(X_val.reshape(-1, f))
+            X_scaled = np.nan_to_num(X_scaled, nan=0.0, posinf=0.0, neginf=0.0).reshape(n, seq, f)
 
-                if len(X_te) == 0:
-                    continue
+            # Predict
+            model.eval()
+            preds = []
+            for i in range(0, len(X_scaled), 2048):
+                batch = X_scaled[i:i + 2048]
+                with torch.no_grad():
+                    X_tensor = torch.FloatTensor(batch).to(device)
+                    result = model.predict(X_tensor)
+                    preds.append(result["prediction"].cpu().numpy())
+            predictions = np.concatenate(preds)
 
-                # Scale
-                n, seq, feat = X_te.shape
-                X_scaled = self.scaler.transform(X_te.reshape(-1, feat))
-                X_scaled = np.nan_to_num(X_scaled, nan=0.0, posinf=0.0, neginf=0.0).reshape(n, seq, feat)
+            per_stock_predictions[ticker] = {
+                "dates": val_dates,
+                "predictions": predictions,
+                "actuals": y_val,
+            }
 
-                # Predict
-                device = next(model.parameters()).device
-                model.eval()
-                preds = []
-                for i in range(0, len(X_scaled), 2048):
-                    batch = X_scaled[i:i + 2048]
-                    with torch.no_grad():
-                        X_tensor = torch.FloatTensor(batch).to(device)
-                        result = model.predict(X_tensor)
-                        preds.append(result["prediction"].cpu().numpy())
-                predictions = np.concatenate(preds)
-
-                per_stock_predictions[ticker] = {
-                    "dates": test_dates,
-                    "predictions": predictions,
-                    "actuals": y_te,
-                }
-
-            except Exception as e:
-                logger.warning(f"Cross-sectional eval failed for {ticker}: {e}")
-
-        if not per_stock_predictions:
-            return {"cross_sectional_ic": 0.0, "ic_ir": 0.0, "ic_hit_rate": 0.0,
-                    "quantile_spread": 0.0, "n_dates": 0}
-
-        return compute_cross_sectional_ic(per_stock_predictions)
+        return per_stock_predictions
 
     def _log_sentiment_diagnostics(self, stock_data: Dict):
         """Log diagnostics about sentiment feature coverage in the dataset."""
@@ -1099,9 +1151,11 @@ class RegressionSentimentExperiment:
                 logger.info(f"  {ticker}: {nonzero_pct:.1%} of rows have non-zero sentiment")
 
     def run(self):
-        """Execute the full regression+sentiment experiment pipeline."""
+        """Execute the walk-forward regression+sentiment experiment pipeline."""
+        folds = self._generate_walk_forward_folds()
+
         logger.info("=" * 80)
-        logger.info("REGRESSION + SENTIMENT EXPERIMENT")
+        logger.info("WALK-FORWARD REGRESSION + SENTIMENT EXPERIMENT")
         logger.info("=" * 80)
         logger.info(f"Sentiment: {'ENABLED' if self.use_sentiment else 'DISABLED'}")
         logger.info(f"Frequency: {self.frequency}")
@@ -1109,8 +1163,11 @@ class RegressionSentimentExperiment:
         logger.info(f"Features: {len(self.feature_cols)} ({len(self.technical_cols)} technical + "
                     f"{len(SENTIMENT_FEATURES) if self.use_sentiment else 0} sentiment)")
         logger.info(f"Date range: {self.start_date} to {self.end_date}")
-        logger.info(f"Splits: train<{self.train_end.date()}, val<{self.val_end.date()}, test>=")
         logger.info(f"Huber delta: {self.huber_delta}, Vol lookback: {self.vol_lookback}")
+        logger.info(f"Walk-forward: {len(folds)} folds, step={self.wf_step}, "
+                    f"expanding window from {self.start_date}")
+        for i, (fs, fe) in enumerate(folds):
+            logger.info(f"  Fold {i+1}: val [{fs.date()} .. {fe.date()})")
 
         # Save config
         config_to_save = {k: v for k, v in self.config.items()
@@ -1120,6 +1177,11 @@ class RegressionSentimentExperiment:
         config_to_save["feature_count"] = len(self.feature_cols)
         config_to_save["sentiment_features"] = SENTIMENT_FEATURES if self.use_sentiment else []
         config_to_save["train_stocks_list"] = self.train_stocks
+        config_to_save["n_folds"] = len(folds)
+        config_to_save["folds"] = [
+            {"fold_start": str(fs.date()), "fold_end": str(fe.date())}
+            for fs, fe in folds
+        ]
         with open(self.output_dir / "config.json", "w") as f:
             json.dump(config_to_save, f, indent=2, default=str)
 
@@ -1129,108 +1191,238 @@ class RegressionSentimentExperiment:
         # Sentiment diagnostics
         self._log_sentiment_diagnostics(stock_data)
 
-        # Prepare pooled training data (from train stocks only)
-        X_train, y_train, X_val, y_val, X_test, y_test, n_features = \
-            self.prepare_pooled_data(stock_data, self.train_stocks)
-
-        # Scale
-        X_train_s, X_val_s, X_test_s = self.scale_data(X_train, X_val, X_test)
-        del X_train, X_val, X_test
-        gc.collect()
-
-        # Create model
-        model = RegressionAttentionLSTM(
-            input_size=n_features,
-            hidden_size=64,
-            num_layers=1,
-            dropout=self.dropout,
-        )
-        n_params = sum(p.numel() for p in model.parameters())
-        logger.info(f"Model parameters: {n_params:,}")
-
-        # Train
-        trainer = RegressionTrainer(
-            model,
-            learning_rate=self.learning_rate,
-            huber_delta=self.huber_delta,
-        )
-
-        train_loader = DataLoader(
-            TensorDataset(torch.FloatTensor(X_train_s), torch.FloatTensor(y_train)),
-            batch_size=self.batch_size, shuffle=True,
-        )
-        val_loader = DataLoader(
-            TensorDataset(torch.FloatTensor(X_val_s), torch.FloatTensor(y_val)),
-            batch_size=self.batch_size,
-        )
-
-        logger.info("\n" + "=" * 40)
-        logger.info("TRAINING")
-        logger.info("=" * 40)
-        start_time = time.time()
-        trainer.train(train_loader, val_loader, epochs=self.epochs, patience=self.patience)
-        train_time = time.time() - start_time
-        logger.info(f"Training time: {train_time:.1f}s")
-
-        # === POOLED TEST EVALUATION ===
-        logger.info("\n" + "=" * 40)
-        logger.info("POOLED TEST EVALUATION")
-        logger.info("=" * 40)
-
-        pooled_metrics = evaluate_regression_model(model, X_test_s, y_test)
-        pooled_preds = pooled_metrics.pop("predictions", None)
-
-        if "error" not in pooled_metrics:
-            logger.info(f"Pooled: n={pooled_metrics['n_samples']:,}, "
-                       f"MSE={pooled_metrics['mse']:.4f}, "
-                       f"MAE={pooled_metrics['mae']:.4f}, "
-                       f"R²={pooled_metrics['r2']:.4f}, "
-                       f"IC={pooled_metrics['ic']:.4f}, "
-                       f"DirAcc={pooled_metrics['directional_accuracy']:.2%}")
-
-        # === PER-STOCK EVALUATION ===
-        logger.info("\n" + "=" * 40)
-        logger.info("PER-STOCK EVALUATION")
-        logger.info("=" * 40)
-
-        per_stock_results = []
-        for ticker in self.test_stocks:
-            result = self.evaluate_single_stock(model, stock_data, ticker)
-            per_stock_results.append(result)
-            if "error" not in result:
-                sent_flag = "📰" if result.get("has_sentiment") else "  "
-                logger.info(f"{sent_flag} {ticker}: MSE={result['mse']:.4f}, "
-                           f"IC={result['ic']:.4f}, "
-                           f"DirAcc={result['directional_accuracy']:.2%}, "
-                           f"n={result['n_samples']}")
-            else:
-                logger.warning(f"{ticker}: {result['error']}")
-
-        # === CROSS-SECTIONAL IC (ranking quality) ===
-        logger.info("\n" + "=" * 40)
-        logger.info("CROSS-SECTIONAL EVALUATION (Ranking Quality)")
-        logger.info("=" * 40)
-
-        # Use ALL stocks (train + test) for cross-sectional eval
+        # Pre-compute features for all stocks (done once, reused across folds)
+        # Include test stocks so cross-sectional IC can use them
         all_tickers = list(set(self.train_stocks + self.test_stocks))
-        cs_metrics = self.evaluate_cross_sectional(model, stock_data, all_tickers)
+        logger.info("\n" + "=" * 40)
+        logger.info("PRE-COMPUTING FEATURES (once for all folds)")
+        logger.info("=" * 40)
+        prepared = self.prepare_all_stock_features(stock_data, all_tickers)
 
+        if not prepared:
+            logger.error("No stocks prepared successfully — aborting")
+            return {"error": "No data"}
+
+        # Separate prepared data for training (exclude test stocks from training folds)
+        test_set = set(self.test_stocks)
+        prepared_train = {t: v for t, v in prepared.items() if t not in test_set}
+
+        # === WALK-FORWARD LOOP ===
+        train_start = pd.Timestamp(self.start_date)
+        fold_results = []
+        all_val_preds = []
+        all_val_true = []
+        all_cs_predictions = {}  # Accumulate cross-sectional predictions across folds
+        total_train_time = 0.0
+        last_model = None
+        last_scaler = None
+        n_features = None
+
+        for fold_idx, (fold_start, fold_end) in enumerate(folds):
+            logger.info(f"\n{'=' * 60}")
+            logger.info(f"FOLD {fold_idx+1}/{len(folds)}: "
+                       f"Train [{train_start.date()} .. {fold_start.date()}) → "
+                       f"Val [{fold_start.date()} .. {fold_end.date()})")
+            logger.info(f"{'=' * 60}")
+
+            # Build train/val arrays for this fold
+            X_train, y_train, X_val, y_val, nf = self._build_fold_data(
+                prepared_train, train_start, fold_start, fold_start, fold_end
+            )
+
+            if len(X_train) == 0 or len(X_val) == 0:
+                logger.warning(f"Fold {fold_idx+1}: Insufficient data "
+                             f"(train={len(X_train)}, val={len(X_val)}) — skipping")
+                fold_results.append({
+                    "fold": fold_idx + 1,
+                    "val_start": str(fold_start.date()),
+                    "val_end": str(fold_end.date()),
+                    "error": "Insufficient data",
+                })
+                continue
+
+            if n_features is None:
+                n_features = nf
+
+            logger.info(f"  Train: {len(X_train):,} samples, Val: {len(X_val):,} samples")
+            logger.info(f"  Target stats (train): mean={y_train.mean():.4f}, "
+                       f"std={y_train.std():.4f}")
+
+            # Scale (fresh scaler per fold)
+            X_train_s, X_val_s, scaler = self._scale_data(X_train, X_val)
+            del X_train, X_val
+            gc.collect()
+
+            # Create FRESH model
+            model = RegressionAttentionLSTM(
+                input_size=n_features,
+                hidden_size=64,
+                num_layers=1,
+                dropout=self.dropout,
+            )
+
+            # Train
+            trainer = RegressionTrainer(
+                model,
+                learning_rate=self.learning_rate,
+                huber_delta=self.huber_delta,
+            )
+
+            train_loader = DataLoader(
+                TensorDataset(torch.FloatTensor(X_train_s), torch.FloatTensor(y_train)),
+                batch_size=self.batch_size, shuffle=True,
+            )
+            val_loader = DataLoader(
+                TensorDataset(torch.FloatTensor(X_val_s), torch.FloatTensor(y_val)),
+                batch_size=self.batch_size,
+            )
+
+            fold_start_time = time.time()
+            trainer.train(train_loader, val_loader, epochs=self.epochs, patience=self.patience)
+            fold_train_time = time.time() - fold_start_time
+            total_train_time += fold_train_time
+
+            # Evaluate on validation set
+            val_metrics = evaluate_regression_model(model, X_val_s, y_val)
+
+            # Collect predictions for aggregate metrics
+            if "predictions" in val_metrics:
+                all_val_preds.append(val_metrics["predictions"])
+                all_val_true.append(y_val)
+
+            # Cross-sectional IC for this fold (using ALL stocks including test)
+            cs_preds = self.evaluate_cross_sectional_walkforward(
+                prepared, model, scaler, fold_start, fold_end
+            )
+            # Merge into accumulated predictions
+            for ticker, data in cs_preds.items():
+                if ticker not in all_cs_predictions:
+                    all_cs_predictions[ticker] = {
+                        "dates": [], "predictions": [], "actuals": []
+                    }
+                all_cs_predictions[ticker]["dates"].extend(data["dates"])
+                all_cs_predictions[ticker]["predictions"] = np.concatenate([
+                    all_cs_predictions[ticker]["predictions"]
+                    if isinstance(all_cs_predictions[ticker]["predictions"], np.ndarray)
+                    and len(all_cs_predictions[ticker]["predictions"]) > 0
+                    else np.array([]),
+                    data["predictions"]
+                ])
+                all_cs_predictions[ticker]["actuals"] = np.concatenate([
+                    all_cs_predictions[ticker]["actuals"]
+                    if isinstance(all_cs_predictions[ticker]["actuals"], np.ndarray)
+                    and len(all_cs_predictions[ticker]["actuals"]) > 0
+                    else np.array([]),
+                    data["actuals"]
+                ])
+
+            fold_result = {
+                "fold": fold_idx + 1,
+                "val_start": str(fold_start.date()),
+                "val_end": str(fold_end.date()),
+                "train_samples": int(len(X_train_s)),
+                "val_samples": int(len(X_val_s)),
+                "train_time": fold_train_time,
+                "mse": val_metrics.get("mse", 0),
+                "mae": val_metrics.get("mae", 0),
+                "r2": val_metrics.get("r2", 0),
+                "ic": val_metrics.get("ic", 0),
+                "directional_accuracy": val_metrics.get("directional_accuracy", 0),
+            }
+            fold_results.append(fold_result)
+
+            logger.info(f"  → MSE={fold_result['mse']:.4f}, "
+                       f"IC={fold_result['ic']:.4f}, "
+                       f"DirAcc={fold_result['directional_accuracy']:.2%}, "
+                       f"Time={fold_train_time:.1f}s")
+
+            # Keep last fold's model and scaler for per-stock evaluation
+            last_model = model
+            last_scaler = scaler
+
+            # Cleanup
+            del X_train_s, X_val_s, train_loader, val_loader, trainer
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        # === AGGREGATE METRICS ACROSS ALL FOLDS ===
+        logger.info(f"\n{'=' * 60}")
+        logger.info("AGGREGATED WALK-FORWARD RESULTS")
+        logger.info(f"{'=' * 60}")
+
+        valid_folds = [r for r in fold_results if "error" not in r]
+
+        if all_val_preds:
+            agg_preds = np.concatenate(all_val_preds)
+            agg_true = np.concatenate(all_val_true)
+            agg_metrics = compute_regression_metrics(agg_true, agg_preds)
+        else:
+            agg_metrics = {"mse": 0, "mae": 0, "r2": 0, "ic": 0,
+                          "directional_accuracy": 0, "n_samples": 0}
+
+        logger.info(f"Total val samples: {agg_metrics.get('n_samples', 0):,}")
+        logger.info(f"Aggregate MSE={agg_metrics.get('mse', 0):.4f}, "
+                    f"IC={agg_metrics.get('ic', 0):.4f}, "
+                    f"DirAcc={agg_metrics.get('directional_accuracy', 0):.2%}, "
+                    f"R²={agg_metrics.get('r2', 0):.4f}")
+
+        # Per-fold breakdown
+        if valid_folds:
+            ics = [r["ic"] for r in valid_folds]
+            dir_accs = [r["directional_accuracy"] for r in valid_folds]
+            mses = [r["mse"] for r in valid_folds]
+            logger.info(f"Per-fold IC: mean={np.mean(ics):.4f}, "
+                       f"std={np.std(ics):.4f}, "
+                       f"min={np.min(ics):.4f}, max={np.max(ics):.4f}")
+            logger.info(f"Per-fold DirAcc: mean={np.mean(dir_accs):.2%}, "
+                       f"std={np.std(dir_accs):.2%}")
+
+        # === CROSS-SECTIONAL IC (aggregated across all folds) ===
+        logger.info(f"\n{'=' * 40}")
+        logger.info("CROSS-SECTIONAL EVALUATION (Ranking Quality)")
+        logger.info(f"{'=' * 40}")
+
+        cs_metrics = compute_cross_sectional_ic(all_cs_predictions)
         logger.info(f"Cross-Sectional IC: {cs_metrics['cross_sectional_ic']:.4f}")
         logger.info(f"IC IR (consistency): {cs_metrics['ic_ir']:.4f}")
         logger.info(f"IC Hit Rate: {cs_metrics['ic_hit_rate']:.2%}")
         logger.info(f"Quantile Spread (Q5-Q1): {cs_metrics['quantile_spread']:.4f}")
         logger.info(f"Evaluated on {cs_metrics['n_dates']} dates")
 
+        # === PER-STOCK EVALUATION (using last fold's model) ===
+        per_stock_results = []
+        if last_model is not None and last_scaler is not None:
+            logger.info(f"\n{'=' * 40}")
+            logger.info("PER-STOCK EVALUATION (last fold model)")
+            logger.info(f"{'=' * 40}")
+
+            for ticker in self.test_stocks:
+                result = self.evaluate_single_stock(
+                    last_model, stock_data, ticker, last_scaler
+                )
+                per_stock_results.append(result)
+                if "error" not in result:
+                    sent_flag = "📰" if result.get("has_sentiment") else "  "
+                    logger.info(f"{sent_flag} {ticker}: MSE={result['mse']:.4f}, "
+                               f"IC={result['ic']:.4f}, "
+                               f"DirAcc={result['directional_accuracy']:.2%}, "
+                               f"n={result['n_samples']}")
+                else:
+                    logger.warning(f"{ticker}: {result['error']}")
+
         # === SAVE RESULTS ===
-        valid = [r for r in per_stock_results if "error" not in r]
-        avg_mse = np.mean([r["mse"] for r in valid]) if valid else 0
-        avg_mae = np.mean([r["mae"] for r in valid]) if valid else 0
-        avg_ic = np.mean([r["ic"] for r in valid]) if valid else 0
-        avg_r2 = np.mean([r["r2"] for r in valid]) if valid else 0
-        avg_dir_acc = np.mean([r["directional_accuracy"] for r in valid]) if valid else 0
+        valid_ps = [r for r in per_stock_results if "error" not in r]
+        avg_mse = np.mean([r["mse"] for r in valid_ps]) if valid_ps else 0
+        avg_mae = np.mean([r["mae"] for r in valid_ps]) if valid_ps else 0
+        avg_ic = np.mean([r["ic"] for r in valid_ps]) if valid_ps else 0
+        avg_r2 = np.mean([r["r2"] for r in valid_ps]) if valid_ps else 0
+        avg_dir_acc = np.mean([r["directional_accuracy"] for r in valid_ps]) if valid_ps else 0
+
+        n_params = sum(p.numel() for p in last_model.parameters()) if last_model else 0
 
         summary = {
-            "experiment_name": self.config.get("experiment_name", "regression_sentiment"),
+            "experiment_name": self.config.get("experiment_name", "wf_regression_sentiment"),
             "task": "regression",
             "target": "vol_adj_forward_return",
             "loss_function": f"huber_delta_{self.huber_delta}",
@@ -1248,53 +1440,70 @@ class RegressionSentimentExperiment:
             "vol_lookback": self.vol_lookback,
             "target_clip": self.target_clip,
             "epochs": self.epochs,
-            "train_time": train_time,
-            # Pooled metrics
-            "pooled_mse": pooled_metrics.get("mse", 0),
-            "pooled_mae": pooled_metrics.get("mae", 0),
-            "pooled_r2": pooled_metrics.get("r2", 0),
-            "pooled_ic": pooled_metrics.get("ic", 0),
-            "pooled_directional_accuracy": pooled_metrics.get("directional_accuracy", 0),
-            "pooled_n_samples": pooled_metrics.get("n_samples", 0),
+            "total_train_time": total_train_time,
+            # Walk-forward params
+            "wf_step": self.wf_step,
+            "wf_val_start": str(self.wf_val_start.date()),
+            "wf_val_end": str(self.wf_val_end.date()),
+            "n_folds": len(folds),
+            "n_valid_folds": len(valid_folds),
+            # Aggregated walk-forward metrics (all folds pooled)
+            "wf_agg_mse": agg_metrics.get("mse", 0),
+            "wf_agg_mae": agg_metrics.get("mae", 0),
+            "wf_agg_r2": agg_metrics.get("r2", 0),
+            "wf_agg_ic": agg_metrics.get("ic", 0),
+            "wf_agg_directional_accuracy": agg_metrics.get("directional_accuracy", 0),
+            "wf_agg_n_samples": agg_metrics.get("n_samples", 0),
+            # Per-fold mean metrics
+            "wf_mean_ic": float(np.mean(ics)) if valid_folds else 0,
+            "wf_std_ic": float(np.std(ics)) if valid_folds else 0,
+            "wf_mean_mse": float(np.mean(mses)) if valid_folds else 0,
+            "wf_mean_directional_accuracy": float(np.mean(dir_accs)) if valid_folds else 0,
             # Cross-sectional (ranking) metrics
             "cross_sectional_ic": cs_metrics.get("cross_sectional_ic", 0),
             "ic_ir": cs_metrics.get("ic_ir", 0),
             "ic_hit_rate": cs_metrics.get("ic_hit_rate", 0),
             "quantile_spread": cs_metrics.get("quantile_spread", 0),
             "cs_n_dates": cs_metrics.get("n_dates", 0),
-            # Per-stock averages
+            # Per-stock averages (last fold model)
             "per_stock_avg_mse": avg_mse,
             "per_stock_avg_mae": avg_mae,
             "per_stock_avg_ic": avg_ic,
             "per_stock_avg_r2": avg_r2,
             "per_stock_avg_directional_accuracy": avg_dir_acc,
-            "per_stock_count": len(valid),
+            "per_stock_count": len(valid_ps),
         }
 
         pd.DataFrame([summary]).to_csv(self.output_dir / "summary.csv", index=False)
+        pd.DataFrame(fold_results).to_csv(self.output_dir / "per_fold_results.csv", index=False)
         pd.DataFrame(per_stock_results).to_csv(self.output_dir / "per_stock_results.csv", index=False)
-        torch.save(model.state_dict(), self.output_dir / "model.pt")
+        if last_model is not None:
+            torch.save(last_model.state_dict(), self.output_dir / "model.pt")
 
         logger.info(f"\n{'=' * 60}")
         logger.info("SUMMARY")
         logger.info(f"{'=' * 60}")
         logger.info(f"RegressionAttentionLSTM ({n_params:,} params)")
         logger.info(f"Features: {n_features} ({len(self.technical_cols)} technical + "
-                    f"{n_features - len(self.technical_cols)} sentiment)")
-        logger.info(f"Pooled:    MSE={pooled_metrics.get('mse', 0):.4f}, "
-                    f"IC={pooled_metrics.get('ic', 0):.4f}, "
-                    f"DirAcc={pooled_metrics.get('directional_accuracy', 0):.2%}")
-        logger.info(f"Per-stock: IC={avg_ic:.4f}, DirAcc={avg_dir_acc:.2%}")
-        logger.info(f"Ranking:   CS-IC={cs_metrics.get('cross_sectional_ic', 0):.4f}, "
+                    f"{(n_features or 0) - len(self.technical_cols)} sentiment)")
+        logger.info(f"Walk-forward: {len(valid_folds)}/{len(folds)} folds, "
+                    f"total train time: {total_train_time:.1f}s")
+        logger.info(f"WF Aggregate: MSE={agg_metrics.get('mse', 0):.4f}, "
+                    f"IC={agg_metrics.get('ic', 0):.4f}, "
+                    f"DirAcc={agg_metrics.get('directional_accuracy', 0):.2%}")
+        if valid_folds:
+            logger.info(f"WF Per-fold:  IC={np.mean(ics):.4f} ± {np.std(ics):.4f}")
+        logger.info(f"Ranking:      CS-IC={cs_metrics.get('cross_sectional_ic', 0):.4f}, "
                     f"ICIR={cs_metrics.get('ic_ir', 0):.4f}, "
                     f"Q-Spread={cs_metrics.get('quantile_spread', 0):.4f}")
+        logger.info(f"Per-stock:    IC={avg_ic:.4f}, DirAcc={avg_dir_acc:.2%}")
         logger.info(f"Results saved to: {self.output_dir}")
 
         return summary
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Regression + Sentiment Experiment")
+    parser = argparse.ArgumentParser(description="Walk-Forward Regression + Sentiment Experiment")
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--frequency", choices=["daily", "weekly"], default="daily")
@@ -1308,14 +1517,20 @@ def main():
     parser.add_argument("--target-clip", type=float, default=10.0, help="Clip vol-adj return to ±N")
     parser.add_argument("--no-sentiment", action="store_true", help="Disable sentiment features (baseline)")
     parser.add_argument("--no-cache", action="store_true")
-    parser.add_argument("--name", type=str, default="regression_sentiment", help="Experiment name")
+    parser.add_argument("--name", type=str, default="wf_regression_sentiment", help="Experiment name")
     parser.add_argument("--max-tickers", type=int, default=DEFAULT_MAX_TICKERS,
                         help=f"Max tickers by density rank (default: {DEFAULT_MAX_TICKERS})")
-    # Temporal split overrides
+    # Date range
     parser.add_argument("--start-date", type=str, default="2012-01-01")
     parser.add_argument("--end-date", type=str, default="2019-12-31")
-    parser.add_argument("--train-end", type=str, default="2017-01-01")
-    parser.add_argument("--val-end", type=str, default="2018-01-01")
+    # Walk-forward params
+    parser.add_argument("--wf-val-start", type=str, default="2017-01-01",
+                        help="First fold validation start (default: 2017-01-01)")
+    parser.add_argument("--wf-val-end", type=str, default="2019-12-31",
+                        help="Last fold validation end (default: 2019-12-31)")
+    parser.add_argument("--wf-step", type=str, default="QS",
+                        choices=["MS", "QS"],
+                        help="Fold frequency: MS=monthly (36 folds), QS=quarterly (12 folds)")
     args = parser.parse_args()
 
     config = {
@@ -1333,8 +1548,9 @@ def main():
         "max_tickers": args.max_tickers,
         "start_date": args.start_date,
         "end_date": args.end_date,
-        "train_end": args.train_end,
-        "val_end": args.val_end,
+        "wf_val_start": args.wf_val_start,
+        "wf_val_end": args.wf_val_end,
+        "wf_step": args.wf_step,
     }
 
     if args.batch_size:

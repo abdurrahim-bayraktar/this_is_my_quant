@@ -1,0 +1,244 @@
+{
+  "experiment": "sentiment_feature_selection",
+  "timestamp": "20260527_140032",
+  "ticker_filter": {
+    "excluded_count": 89,
+    "max_tickers_by_density": 150,
+    "actual_tickers_used": 115,
+    "top_10_by_density": [
+      {
+        "ticker": "AA",
+        "days_with_news": 2087,
+        "density_pct": 100.0
+      },
+      {
+        "ticker": "AGN",
+        "days_with_news": 2087,
+        "density_pct": 100.0
+      },
+      {
+        "ticker": "AKS",
+        "days_with_news": 2087,
+        "density_pct": 100.0
+      },
+      {
+        "ticker": "ALK",
+        "days_with_news": 2087,
+        "density_pct": 100.0
+      },
+      {
+        "ticker": "AMTD",
+        "days_with_news": 2087,
+        "density_pct": 100.0
+      },
+      {
+        "ticker": "ANF",
+        "days_with_news": 2087,
+        "density_pct": 100.0
+      },
+      {
+        "ticker": "APC",
+        "days_with_news": 2087,
+        "density_pct": 100.0
+      },
+      {
+        "ticker": "A",
+        "days_with_news": 2087,
+        "density_pct": 100.0
+      },
+      {
+        "ticker": "BAX",
+        "days_with_news": 2087,
+        "density_pct": 100.0
+      },
+      {
+        "ticker": "BDX",
+        "days_with_news": 2087,
+        "density_pct": 100.0
+      }
+    ]
+  },
+  "sentiment_features": [
+    "sent_mean",
+    "sent_std",
+    "sent_count_log",
+    "sent_momentum_3d",
+    "sent_ema_5d",
+    "sent_surprise",
+    "sent_strength",
+    "sent_ema_20d"
+  ],
+  "new_feature": "sent_ema_20d (20-day EMA of sent_mean)",
+  "top_k": 2,
+  "n_repeats": 10,
+  "n_estimators": 200,
+  "random_state": 42,
+  "regression": {
+    "n_samples": 186224,
+    "selected_features": [
+      "sent_count_log",
+      "sent_strength"
+    ],
+    "scoring": "r2",
+    "rankings": [
+      {
+        "feature": "sent_count_log",
+        "importance_mean": 0.007335302281049383,
+        "importance_std": 0.00011553654360263182,
+        "rank": 1,
+        "selected": true,
+        "gini_importance": 0.12551733786783234,
+        "task": "regression"
+      },
+      {
+        "feature": "sent_strength",
+        "importance_mean": 0.007199336003614587,
+        "importance_std": 0.00021328725496333595,
+        "rank": 2,
+        "selected": true,
+        "gini_importance": 0.1405987770170354,
+        "task": "regression"
+      },
+      {
+        "feature": "sent_mean",
+        "importance_mean": 0.0059050434308153266,
+        "importance_std": 0.00017473098416984615,
+        "rank": 3,
+        "selected": false,
+        "gini_importance": 0.13847570171944218,
+        "task": "regression"
+      },
+      {
+        "feature": "sent_surprise",
+        "importance_mean": 0.005440344381039375,
+        "importance_std": 0.00015098455582438026,
+        "rank": 4,
+        "selected": false,
+        "gini_importance": 0.12866565607313643,
+        "task": "regression"
+      },
+      {
+        "feature": "sent_momentum_3d",
+        "importance_mean": 0.0042566463139914745,
+        "importance_std": 5.884984835728069e-05,
+        "rank": 5,
+        "selected": false,
+        "gini_importance": 0.1343096010169646,
+        "task": "regression"
+      },
+      {
+        "feature": "sent_ema_5d",
+        "importance_mean": 0.0038252439756998437,
+        "importance_std": 8.220019481632615e-05,
+        "rank": 6,
+        "selected": false,
+        "gini_importance": 0.12157287428898624,
+        "task": "regression"
+      },
+      {
+        "feature": "sent_std",
+        "importance_mean": 0.0034207275490854895,
+        "importance_std": 5.654985601518565e-05,
+        "rank": 7,
+        "selected": false,
+        "gini_importance": 0.0964832887280443,
+        "task": "regression"
+      },
+      {
+        "feature": "sent_ema_20d",
+        "importance_mean": 0.0032590503641319103,
+        "importance_std": 5.0831445448478994e-05,
+        "rank": 8,
+        "selected": false,
+        "gini_importance": 0.1143767632885586,
+        "task": "regression"
+      }
+    ]
+  },
+  "classification": {
+    "n_samples": 188124,
+    "threshold_low": -0.005,
+    "threshold_high": 0.005,
+    "selected_features": [
+      "sent_surprise",
+      "sent_ema_20d"
+    ],
+    "scoring": "accuracy",
+    "rankings": [
+      {
+        "feature": "sent_surprise",
+        "importance_mean": 0.019499904318428275,
+        "importance_std": 0.0005273385649600217,
+        "rank": 1,
+        "selected": true,
+        "gini_importance": 0.13245910871458147,
+        "task": "classification"
+      },
+      {
+        "feature": "sent_ema_20d",
+        "importance_mean": 0.01488167378962813,
+        "importance_std": 0.00037257461867805955,
+        "rank": 2,
+        "selected": true,
+        "gini_importance": 0.12832475711170435,
+        "task": "classification"
+      },
+      {
+        "feature": "sent_ema_5d",
+        "importance_mean": 0.014598350024451973,
+        "importance_std": 0.0005130630855134738,
+        "rank": 3,
+        "selected": false,
+        "gini_importance": 0.12859090374280702,
+        "task": "classification"
+      },
+      {
+        "feature": "sent_strength",
+        "importance_mean": 0.014567519295783638,
+        "importance_std": 0.0010238023392492648,
+        "rank": 4,
+        "selected": false,
+        "gini_importance": 0.1330281760136961,
+        "task": "classification"
+      },
+      {
+        "feature": "sent_mean",
+        "importance_mean": 0.013563394356913543,
+        "importance_std": 0.000460772728767751,
+        "rank": 5,
+        "selected": false,
+        "gini_importance": 0.12684586937639686,
+        "task": "classification"
+      },
+      {
+        "feature": "sent_momentum_3d",
+        "importance_mean": 0.013083923369692347,
+        "importance_std": 0.0006744803056838955,
+        "rank": 6,
+        "selected": false,
+        "gini_importance": 0.13069422095958824,
+        "task": "classification"
+      },
+      {
+        "feature": "sent_std",
+        "importance_mean": 0.013019072526631375,
+        "importance_std": 0.000430368838981782,
+        "rank": 7,
+        "selected": false,
+        "gini_importance": 0.1094267281138416,
+        "task": "classification"
+      },
+      {
+        "feature": "sent_count_log",
+        "importance_mean": 0.0112319533924433,
+        "importance_std": 0.0006061884180631538,
+        "rank": 8,
+        "selected": false,
+        "gini_importance": 0.11063023596738433,
+        "task": "classification"
+      }
+    ],
+    "note": "Labels match ultimate_model_v2.py 3-class trend (down/flat/up)"
+  },
+  "cross_task_overlap": []
+}
