@@ -1,0 +1,92 @@
+{
+  "experiment_name": "smoke_hybrid_reg",
+  "model_type": "hybrid",
+  "frequency": "daily",
+  "test_stocks": [
+    "A",
+    "BAX",
+    "BBT"
+  ],
+  "epochs": 2,
+  "dropout": 0.2,
+  "learning_rate": 0.0005,
+  "patience": 15,
+  "huber_delta": 1.0,
+  "vol_lookback": 20,
+  "target_clip": 10.0,
+  "use_sentiment": true,
+  "max_tickers": 10,
+  "start_date": "2012-01-01",
+  "end_date": "2019-12-31",
+  "wf_val_start": "2017-01-01",
+  "wf_val_end": "2019-12-31",
+  "wf_step": "QS",
+  "train_stock_count": 7,
+  "feature_count": 22,
+  "n_technical_features": 20,
+  "n_sentiment_features": 2,
+  "sentiment_features": [
+    "sent_count_log",
+    "sent_strength"
+  ],
+  "train_stocks_list": [
+    "AA",
+    "AGN",
+    "AKS",
+    "ALK",
+    "AMTD",
+    "ANF",
+    "APC"
+  ],
+  "n_folds": 12,
+  "folds": [
+    {
+      "fold_start": "2017-01-01",
+      "fold_end": "2017-04-01"
+    },
+    {
+      "fold_start": "2017-04-01",
+      "fold_end": "2017-07-01"
+    },
+    {
+      "fold_start": "2017-07-01",
+      "fold_end": "2017-10-01"
+    },
+    {
+      "fold_start": "2017-10-01",
+      "fold_end": "2018-01-01"
+    },
+    {
+      "fold_start": "2018-01-01",
+      "fold_end": "2018-04-01"
+    },
+    {
+      "fold_start": "2018-04-01",
+      "fold_end": "2018-07-01"
+    },
+    {
+      "fold_start": "2018-07-01",
+      "fold_end": "2018-10-01"
+    },
+    {
+      "fold_start": "2018-10-01",
+      "fold_end": "2019-01-01"
+    },
+    {
+      "fold_start": "2019-01-01",
+      "fold_end": "2019-04-01"
+    },
+    {
+      "fold_start": "2019-04-01",
+      "fold_end": "2019-07-01"
+    },
+    {
+      "fold_start": "2019-07-01",
+      "fold_end": "2019-10-01"
+    },
+    {
+      "fold_start": "2019-10-01",
+      "fold_end": "2020-01-01"
+    }
+  ]
+}
