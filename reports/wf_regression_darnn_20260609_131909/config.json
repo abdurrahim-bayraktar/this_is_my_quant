@@ -1,0 +1,68 @@
+{
+  "experiment_name": "wf_regression_darnn",
+  "frequency": "daily",
+  "test_stocks": [
+    "MSFT",
+    "AAPL",
+    "JPM",
+    "JNJ",
+    "XOM",
+    "WMT",
+    "DIS",
+    "BA",
+    "KO",
+    "NVDA",
+    "SPY",
+    "SPX"
+  ],
+  "epochs": 100,
+  "dropout": 0.2,
+  "learning_rate": 0.0005,
+  "patience": 15,
+  "huber_delta": 1.0,
+  "vol_lookback": 20,
+  "target_clip": 10.0,
+  "encoder_hidden": 64,
+  "decoder_hidden": 64,
+  "start_date": "2014-01-01",
+  "end_date": "2024-12-31",
+  "wf_val_start": "2023-01-01",
+  "wf_val_end": "2024-12-31",
+  "wf_step": "QS",
+  "train_stock_count": 596,
+  "n_folds": 8,
+  "folds": [
+    {
+      "fold_start": "2023-01-01",
+      "fold_end": "2023-04-01"
+    },
+    {
+      "fold_start": "2023-04-01",
+      "fold_end": "2023-07-01"
+    },
+    {
+      "fold_start": "2023-07-01",
+      "fold_end": "2023-10-01"
+    },
+    {
+      "fold_start": "2023-10-01",
+      "fold_end": "2024-01-01"
+    },
+    {
+      "fold_start": "2024-01-01",
+      "fold_end": "2024-04-01"
+    },
+    {
+      "fold_start": "2024-04-01",
+      "fold_end": "2024-07-01"
+    },
+    {
+      "fold_start": "2024-07-01",
+      "fold_end": "2024-10-01"
+    },
+    {
+      "fold_start": "2024-10-01",
+      "fold_end": "2025-01-01"
+    }
+  ]
+}

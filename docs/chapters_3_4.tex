@@ -1,0 +1,1155 @@
+% =============================================================================
+%  Chapters 3 & 4
+%  Sentiment-Driven Stock Trend Prediction — Graduation Project
+% =============================================================================
+
+% NOTE: This file is meant to be \input{} or \include{} into the main .tex
+%       document.  It assumes the preamble already loads:
+%         amsmath, amssymb, graphicx, booktabs, longtable, hyperref,
+%         algorithm2e (or algorithmicx), tikz, subcaption, listings, xcolor
+%       and defines \PROJECT, \FNSPID, etc. macros as needed.
+
+% ============================================================================
+\chapter{Developed Approach and System Model}
+\label{ch:approach}
+% ============================================================================
+
+This chapter presents the end-to-end system that was designed, implemented, and
+iteratively refined over the course of this project.  We decompose the system
+into three complementary models following standard systems-engineering practice:
+a \emph{Data Model} describing what information flows through the system and how
+it is represented (Section~\ref{sec:data-model}), a \emph{Structural Model}
+describing the neural-network architectures that learn from that data
+(Section~\ref{sec:structural-model}), and a \emph{Dynamic Model} describing the
+temporal training and evaluation protocol that governs how the structural model
+interacts with the data model over time (Section~\ref{sec:dynamic-model}).
+
+% --------------------------------------------------------------------------
+\section{Data Model}
+\label{sec:data-model}
+% --------------------------------------------------------------------------
+
+The data model comprises four stages: (i)~raw data acquisition,
+(ii)~sentiment extraction and aggregation, (iii)~technical indicator
+computation, and (iv)~feature selection and caching.  Each stage is described
+in full below.
+
+% ·····································
+\subsection{Raw Data Sources}
+\label{sec:raw-data}
+% ·····································
+
+Two primary data sources feed the system:
+
+\paragraph{Price Data.}
+Daily Open--High--Low--Close--Volume (OHLCV) data for 200 S\&P\,500 constituent
+stocks is retrieved from \texttt{yfinance}.  The date range spans
+\textbf{2012-01-01 to 2019-12-31}, deliberately restricted to the era in which
+the sentiment corpus has dense coverage.  A dedicated \texttt{PriceCache} module
+(Section~\ref{sec:caching}) ensures that the 23\,GB download is performed only
+once and subsequent runs hit a local pickle cache.
+
+\paragraph{News Sentiment Corpus (FNSPID).}
+The Financial News and Stock Price Integration Dataset
+(FNSPID)~\cite{fnspid2024} provides roughly 29.7\,million financial news
+headlines spanning 2009--2020.  Each record maps a headline to a ticker symbol
+and a UTC timestamp.  We ingest this corpus through a streaming CSV reader that
+filters by our 200-ticker universe and persists per-ticker Parquet files to
+disk.
+
+% ·····································
+\subsection{Sentiment Extraction via FinBERT}
+\label{sec:finbert}
+% ·····································
+
+Raw headlines carry no quantitative signal that a neural network can consume.
+We therefore transform each headline into a three-dimensional probability vector
+using \textbf{FinBERT}~\cite{finbert2019}, a domain-specific variant of the BERT
+architecture~\cite{devlin2019bert}.
+
+FinBERT was pre-trained on a large financial corpus (including Reuters TRC2 and
+financial articles) and then fine-tuned on the Financial PhraseBank dataset for
+three-class sentiment classification.  It inherits BERT's 12-layer
+Transformer-encoder backbone with 110\,M parameters, but its vocabulary and
+pre-training objective are tailored to financial language, making it
+substantially more accurate than general-purpose sentiment classifiers on
+financial text.
+
+The extraction pipeline operates as follows:
+
+\begin{enumerate}
+  \item \textbf{Tokenisation.}  Each headline is tokenised using FinBERT's
+        WordPiece tokeniser with a maximum sequence length of 512 sub-word
+        tokens.  Shorter sequences are padded; longer ones are truncated.
+
+  \item \textbf{Forward Pass.}  The tokenised input is passed through the
+        12-layer Transformer encoder.  The \texttt{[CLS]} token's final hidden
+        state (a 768-dimensional vector) is projected through a linear
+        classification head to produce three raw logits.
+
+  \item \textbf{Softmax Calibration.}  A softmax function converts the logits
+        into a probability triple
+        $(\hat{p}_{\text{pos}},\;\hat{p}_{\text{neg}},\;\hat{p}_{\text{neu}})$
+        summing to one.
+
+  \item \textbf{Sentiment Value.}  A scalar sentiment value is computed as the
+        signed polarity:
+        \begin{equation}
+          s = \hat{p}_{\text{pos}} - \hat{p}_{\text{neg}}
+          \label{eq:sentiment-value}
+        \end{equation}
+        This yields $s \in [-1, +1]$, where $s > 0$ indicates bullish sentiment
+        and $s < 0$ indicates bearish sentiment.
+\end{enumerate}
+
+\noindent
+Inference is performed in batches of 16 on a CUDA-enabled GPU with
+\texttt{torch.no\_grad()} context to avoid gradient computation overhead.  The
+resulting sentiment columns (label, score, positive, negative, neutral,
+sentiment\_value) are persisted as per-ticker Parquet files for reuse.
+
+% ·····································
+\subsection{Daily Sentiment Aggregation}
+\label{sec:aggregation}
+% ·····································
+
+Multiple headlines may appear for the same ticker on the same trading day.  The
+\texttt{SentimentAggregator} module consolidates them into daily features via
+one of three configurable strategies:
+
+\begin{itemize}
+  \item \textbf{Simple Average} (default for final experiments): computes the
+        arithmetic mean, standard deviation, and count of all sentiment values
+        $s$ falling on the same trading date.
+
+  \item \textbf{Time-Weighted Average}: weights more recent intra-day headlines
+        more heavily, assuming that later news supersedes earlier reports.
+
+  \item \textbf{Sticky Sentiment with Exponential Decay}: implements a
+        state-machine that maintains a running sentiment signal.  If the daily
+        mean exceeds a significance threshold $|s| > 0.1$, the state is updated
+        to the new value.  Otherwise, the previous state is decayed by a factor
+        of $\alpha = 0.95$ per day.  This models the intuition that market
+        sentiment persists beyond the publication date of a headline---traders do
+        not forget yesterday's news instantaneously.
+\end{itemize}
+
+Additionally, \textbf{sentiment momentum} features are computed over rolling
+windows of 3, 5, and 10 days, capturing the rate of change in the sentiment
+signal.
+
+\paragraph{No-News Day Handling.}
+A critical design decision concerns trading days on which no headline exists for
+a given ticker.  Rather than filling with zero (which would cause abrupt signal
+drops), we apply an \textbf{exponential decay fill}: the last known sentiment
+value is forward-filled and attenuated by $0.95^d$, where $d$ is the number of
+consecutive no-news days.  This ensures that sentiment ``fades'' gradually rather
+than vanishing, reflecting the real-world persistence of market narratives.
+
+% ·····································
+\subsection{Eight Candidate Sentiment Features}
+\label{sec:sentiment-features}
+% ·····································
+
+From the aggregated daily sentiment, we engineer eight candidate features:
+
+\begin{table}[htbp]
+\centering
+\caption{Eight candidate sentiment features derived from daily FinBERT scores.}
+\label{tab:sentiment-features}
+\begin{tabular}{@{}llp{6.5cm}@{}}
+\toprule
+\textbf{Feature}          & \textbf{Type}     & \textbf{Definition} \\
+\midrule
+\texttt{sent\_mean}       & Level             & Daily mean of $s$ \\
+\texttt{sent\_dispersion} & Volatility        & Intra-day standard deviation of $s$ \\
+\texttt{sent\_count\_log} & Activity          & $\log(1 + \text{news count})$ \\
+\texttt{sent\_strength}   & Magnitude         & $|\texttt{sent\_mean}| \times \log(1+\text{count})$ \\
+\texttt{sent\_surprise}   & Deviation         & $\texttt{sent\_mean} - \text{MA}_{20}(\texttt{sent\_mean})$ \\
+\texttt{sent\_ema\_20d}   & Regime            & $\text{EMA}_{20}(\texttt{sent\_mean})$ \\
+\texttt{sent\_momentum}   & Trend             & $\texttt{sent\_mean}_t - \texttt{sent\_mean}_{t-5}$ \\
+\texttt{sent\_vol\_ratio} & Relative activity & $\texttt{count}_t\; /\; \text{MA}_{20}(\texttt{count})$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Not all eight features carry useful signal.  Feature selection
+(Section~\ref{sec:feature-selection}) reduces this set to two per task
+formulation.
+
+% ·····································
+\subsection{Technical Indicator Computation}
+\label{sec:technical-indicators}
+% ·····································
+
+The technical feature pipeline evolved through seven major iterations.  The
+final version (V7) uses the \texttt{pandas\_ta} library to compute approximately
+100 indicators from raw OHLCV data, spanning the following categories:
+
+\begin{itemize}
+  \item \textbf{Trend Indicators}: Simple and Exponential Moving Averages (SMA, EMA),
+        MACD and its histogram, Parabolic SAR, Aroon oscillator, ADX with
+        directional indicators (DMP, DMN).
+
+  \item \textbf{Momentum Indicators}: Relative Strength Index (RSI), Commodity
+        Channel Index (CCI), Rate of Change (ROC), Stochastic oscillator, Chande
+        Momentum Oscillator (CMO), TRIX.
+
+  \item \textbf{Volatility Indicators}: Bollinger Bands (upper, middle, lower,
+        bandwidth, percent-B), Average True Range (ATR), Donchian Channels,
+        intraday range, gap percentage.
+
+  \item \textbf{Volume Indicators}: On-Balance Volume (OBV), Accumulation/Distribution
+        line, Chaikin Money Flow (CMF), Price--Volume Oscillator (PVO), volume
+        ratio.
+
+  \item \textbf{Domain-Knowledge Binary Features} (new in V7): Golden/Death Cross
+        signals, RSI overbought/oversold zones, MACD crossover flags, Bollinger
+        Band breakouts, volume confirmation signals.
+
+  \item \textbf{Return Features}: 1-day, 5-day, and 10-day log returns, and
+        derived features such as bear power and bull power.
+\end{itemize}
+
+% ·····································
+\subsection{Feature Selection}
+\label{sec:feature-selection}
+% ·····································
+
+From the ${\sim}100$ raw technical indicators, a two-stage selection process
+reduces the feature set to a compact and informative subset.
+
+\paragraph{Stage 1 --- SHAP-based Technical Feature Selection.}
+A gradient-boosted tree (XGBoost) is trained on the full indicator set.
+SHAP (SHapley Additive exPlanations) values~\cite{lundberg2017shap} are
+computed to rank feature importance.  The top 20 technical features by mean
+absolute SHAP value are retained:
+
+\begin{quote}\small
+\texttt{atr\_pct}, \texttt{intraday\_range}, \texttt{bb\_BBB\_5\_2.0\_2.0},
+\texttt{gap}, \texttt{cci}, \texttt{high\_low\_pct}, \texttt{volume\_ratio},
+\texttt{adx\_DMN\_14}, \texttt{return\_1d}, \texttt{aroon\_AROOND\_14},
+\texttt{adx\_DMP\_14}, \texttt{obv}, \texttt{ad}, \texttt{bear\_power},
+\texttt{roc\_10}, \texttt{pvo\_PVOh\_12\_26\_9}, \texttt{trix\_TRIXs\_30\_9},
+\texttt{rsi\_14}, \texttt{aroon\_AROONU\_14}, \texttt{return\_5d}
+\end{quote}
+
+\paragraph{Stage 2 --- Sentiment Feature Selection via Permutation Importance.}
+The eight candidate sentiment features (Table~\ref{tab:sentiment-features}) are
+evaluated using RandomForest \textbf{permutation importance} rather than the
+more commonly used Gini importance (Mean Decrease in Impurity).  This choice
+is deliberate and motivated by three factors:
+
+\begin{enumerate}
+  \item \textbf{Bias toward high-cardinality features.}  Gini importance is
+        computed during tree construction and is biased toward features with many
+        unique values or high cardinality.  Continuous sentiment features would
+        be systematically overvalued relative to binary or low-cardinality
+        features, yielding misleading rankings.
+
+  \item \textbf{Interaction effects.}  Gini importance measures how much a
+        feature reduces impurity \emph{within the trained tree}, which is
+        sensitive to the tree's specific split structure.  Permutation importance,
+        by contrast, measures the \emph{out-of-sample} accuracy degradation when
+        a feature's values are randomly shuffled, thereby capturing the feature's
+        marginal contribution irrespective of how the model happened to use it.
+
+  \item \textbf{Correlation robustness.}  When features are correlated (as
+        several of our sentiment features are --- e.g.\ \texttt{sent\_mean} and
+        \texttt{sent\_ema\_20d}), Gini importance distributes credit
+        unpredictably among them.  Permutation importance exposes which features
+        the model truly \emph{relies} on, because shuffling a redundant feature
+        will not degrade performance if its correlated partner is intact.
+\end{enumerate}
+
+\noindent
+The selection is task-specific:
+
+\begin{itemize}
+  \item \textbf{Classification task} (3-class trend, scoring = accuracy):
+        \texttt{sent\_surprise} (\#1) and \texttt{sent\_ema\_20d} (\#2).
+  \item \textbf{Regression task} (vol-adjusted return, scoring = $R^2$):
+        \texttt{sent\_count\_log} (\#1) and \texttt{sent\_strength} (\#2).
+\end{itemize}
+
+The remaining six candidates are disabled to reduce noise injection.  The final
+feature vector is therefore $20 + 2 = 22$ dimensional.
+
+% ·····································
+\subsection{Caching Architecture}
+\label{sec:caching}
+% ·····································
+
+A multi-layer persistent caching system eliminates redundant computation across
+experiment runs, effectively creating a \textbf{professional-grade quantitative
+feature pool} that can be queried instantly:
+
+\paragraph{Layer 1 --- Price Cache (\texttt{PriceCache}).}
+The \texttt{PriceCache} class provides persistent pickle-based caching of raw
+OHLCV data downloaded from \texttt{yfinance}.  Cache files are keyed by
+\texttt{(start\_date, end\_date, suffix)} and stored under
+\texttt{data/price\_cache/}.
+
+\begin{itemize}
+  \item On first invocation, \texttt{PriceCache.load()} returns \texttt{None}
+        (cache miss), triggering a fresh download.
+  \item \texttt{PriceCache.save()} serialises the resulting
+        \texttt{Dict[str, DataFrame]} to a pickle file, where each key is a
+        ticker symbol and each value is the full OHLCV DataFrame.
+  \item On subsequent runs, \texttt{load()} deserialises the pickle and
+        optionally filters to the requested ticker subset, avoiding the network
+        round-trip entirely.
+  \item An \texttt{overwrite} flag allows forced refresh when data staleness is
+        suspected.
+\end{itemize}
+
+\paragraph{Layer 2 --- Sentiment Cache.}
+FinBERT inference is computationally expensive (${\sim}$12 hours for the full
+FNSPID corpus on a single GPU).  The \texttt{SentimentExtractor} class supports
+a \texttt{cache\_key} parameter: when set, the extracted sentiment columns
+(\texttt{sentiment\_label}, \texttt{sentiment\_score}, all three class
+probabilities, and \texttt{sentiment\_value}) are serialised to a pickle file
+under \texttt{data/cache/sentiment\_\{key\}.pkl}.  On subsequent calls, if the
+cache file exists, the extraction step is skipped entirely and the cached
+DataFrame is loaded and joined back to the input.  Additionally, per-ticker
+Parquet files are saved under \texttt{data/cache/sentiment/\{TICKER\}\_sentiment.parquet}
+to enable ticker-level selective recomputation.
+
+\paragraph{Layer 3 --- Feature Cache (\texttt{FeatureCache}).}
+Once technical indicators (V7) are computed and features are selected, the
+resulting $(X, y, \text{feature\_cols})$ arrays are cached as pickle files under
+\texttt{data/feature\_cache/}.  Cache files are keyed by
+\texttt{(n\_stocks, start\_date, end\_date, version\_suffix)}.  This allows
+experiments to skip the entire indicator computation and feature selection
+pipeline, loading pre-built NumPy arrays directly.  This layer is especially
+valuable given that indicator computation for 150 stocks over 8 years involves
+${\sim}$300{,}000 rows $\times$ 100 indicators, which takes several minutes.
+
+\begin{figure}[htbp]
+\centering
+\begin{verbatim}
+data/
+├── price_cache/
+│   └── prices_2012-01-01_2019-12-31.pkl     ← Layer 1
+├── cache/
+│   ├── sentiment/
+│   │   ├── AAPL_sentiment.parquet            ← Layer 2
+│   │   ├── MSFT_sentiment.parquet
+│   │   └── ...
+│   └── sentiment_{key}.pkl                   ← Layer 2 (batch)
+└── feature_cache/
+    └── features_150stocks_2012_2019_v7.pkl   ← Layer 3
+\end{verbatim}
+\caption{Three-layer caching hierarchy.  Each layer eliminates a progressively
+more expensive computation: network I/O (Layer~1), GPU-bound FinBERT inference
+(Layer~2), and CPU-bound indicator computation with feature selection (Layer~3).}
+\label{fig:cache-hierarchy}
+\end{figure}
+
+% ·····································
+\subsection{Ticker Universe Curation}
+\label{sec:ticker-curation}
+% ·····································
+
+Not all 200 candidate tickers provide reliable sentiment data.  A density
+analysis pipeline computes each ticker's \textbf{sentiment density} --- the
+fraction of business days within the training period that have at least one
+non-neutral headline.  Tickers are ranked by density and the top~150 are
+retained.
+
+Additionally, a manual exclusion list of 90 tickers was compiled during the
+density analysis phase.  These tickers exhibited one or more of the following
+pathologies: delisted during the study period (e.g.\ YHOO, TWX), dominated
+by ETF-level news rather than company-specific news (e.g.\ VNQ, XLK, SLV),
+ticker collision with non-equity instruments (e.g.\ DGAZ, UGAZ), or
+consistently noisy/irrelevant sentiment scores.
+
+% ·····································
+\subsection{Correlation Analysis: Sentiment vs.\ Returns}
+\label{sec:correlation-analysis}
+% ·····································
+
+Before committing to end-to-end model training, we conducted a preliminary
+correlation study to assess whether the raw sentiment signal carries any
+predictive information.
+
+For each ticker in our universe, we computed two Pearson correlation
+coefficients:
+
+\begin{enumerate}
+  \item \textbf{Same-day correlation}: $\rho(\texttt{sent\_mean}_t,\; R_t)$,
+        where $R_t = (P_t - P_{t-1}) / P_{t-1}$ is the daily return.  This
+        captures whether sentiment and price move together contemporaneously.
+
+  \item \textbf{Next-day (predictive) correlation}:
+        $\rho(\texttt{sent\_mean}_t,\; R_{t+1})$, where $R_{t+1}$ is the
+        following day's return.  This is the operationally relevant quantity,
+        since a trading strategy can only act on today's sentiment to predict
+        tomorrow's return.
+\end{enumerate}
+
+Neutral headlines were filtered out prior to correlation computation to avoid
+diluting the signal.  Scatter plots with linear trend lines were generated for
+each ticker for both same-day and next-day correlations, saved under
+\texttt{reports/top40\_scatters/} and \texttt{reports/top40\_scatters\_next\_day/}
+respectively.
+
+\paragraph{Findings.}
+The correlation analysis revealed that raw sentiment--return correlations are
+\textbf{weak} across the board: same-day correlations typically fall in the range
+$[-0.05, +0.10]$, and next-day correlations are even weaker, clustering near
+zero.  This result is not unexpected --- the Efficient Market Hypothesis predicts
+that publicly available sentiment should be rapidly priced in --- but it has an
+important methodological implication: \emph{sentiment features cannot be expected
+to act as standalone predictors}.  Their value, if any, must arise from
+\textbf{nonlinear interactions} with technical indicators, which motivates the
+neural-network approach rather than a simple linear combination.
+
+% --------------------------------------------------------------------------
+\section{Structural Model}
+\label{sec:structural-model}
+% --------------------------------------------------------------------------
+
+This section describes the neural network architectures explored in this
+project.  The progression from simple to complex architectures reflects an
+empirical search for the right inductive bias for sentiment-augmented stock
+prediction.
+
+% ·····································
+\subsection{Monolithic Architectures (Sentiment as a Regular Feature)}
+\label{sec:monolithic}
+% ·····································
+
+The first approach to integrating sentiment treated it as ``just another
+feature'': the sentiment columns were concatenated alongside the technical
+indicators into a single $d$-dimensional input vector $\mathbf{x}_t \in
+\mathbb{R}^d$ (where $d = 20 + 2 = 22$), and the entire vector was fed into a
+standard recurrent network.
+
+\subsubsection{SimpleTrendLSTM}
+
+The simplest architecture uses a single-layer LSTM with hidden size 32:
+
+\begin{equation}
+  \mathbf{h}_t = \text{LSTM}(\mathbf{x}_t, \mathbf{h}_{t-1})
+  \label{eq:simple-lstm}
+\end{equation}
+
+The final hidden state $\mathbf{h}_T$ is projected through a two-layer MLP
+($32 \to 32 \to 3$) to produce trend logits.  Total parameters: ${\sim}$10K.
+
+\subsubsection{AttentionLSTM}
+
+Building on the SimpleTrendLSTM, the AttentionLSTM adds a multi-head
+self-attention mechanism over the LSTM output sequence:
+
+\begin{align}
+  \mathbf{H} &= \text{LSTM}(\mathbf{X}) \in \mathbb{R}^{T \times h} \\
+  \mathbf{Q} = \mathbf{H}\mathbf{W}_Q,\quad
+  \mathbf{K} &= \mathbf{H}\mathbf{W}_K,\quad
+  \mathbf{V} = \mathbf{H}\mathbf{W}_V \\
+  \text{Attn}(\mathbf{Q}, \mathbf{K}, \mathbf{V}) &=
+    \text{softmax}\!\left(\frac{\mathbf{Q}\mathbf{K}^\top}{\sqrt{d_k}}\right)
+    \mathbf{V}
+  \label{eq:attention}
+\end{align}
+
+The attention module (\texttt{SentimentAttention}, 4 heads by default) learns to
+weight different timesteps in the lookback window, allowing the model to focus
+on the most informative days rather than relying solely on the final hidden
+state.  Total parameters: ${\sim}$50K.
+
+\paragraph{Limitation.}
+In both monolithic architectures, the LSTM's input gate, forget gate, and cell
+state treat every input dimension identically.  This means the two sentiment
+features (which are sparse, noisy, and operate on a fundamentally different
+timescale than technical indicators) compete with 20 well-behaved technical
+features for the same recurrent capacity.  Experimentally, this led to the
+sentiment signal being ``drowned out'' during gradient updates.
+
+% ·····································
+\subsection{Dual-Branch Hybrid Architecture}
+\label{sec:hybrid}
+% ·····································
+
+To address the monolithic architecture's inability to treat heterogeneous
+feature types appropriately, we developed a \textbf{dual-branch hybrid
+architecture} that processes technical indicators and sentiment features through
+separate neural pathways before fusing them.
+
+\subsubsection{Architecture Overview}
+
+The model accepts a single concatenated input tensor $\mathbf{x} \in
+\mathbb{R}^{B \times T \times (n_{\text{tech}} + n_{\text{sent}})}$ and splits
+it internally by feature index:
+
+\begin{equation}
+  \mathbf{x}_{\text{tech}} = \mathbf{x}[:, :, :n_{\text{tech}}],\qquad
+  \mathbf{x}_{\text{sent}} = \mathbf{x}[:, :, n_{\text{tech}}:]
+\end{equation}
+
+\noindent
+This internal-split design preserves full compatibility with the existing data
+pipeline, scaler, and walk-forward loop --- no upstream changes are required.
+
+\subsubsection{Branch 1: Technical Branch (LSTM + Multi-Head Attention)}
+
+The technical branch processes the 20 SHAP-selected indicators:
+
+\begin{align}
+  \hat{\mathbf{x}}_{\text{tech}} &= \text{LayerNorm}(\mathbf{x}_{\text{tech}}) \\
+  \mathbf{H}_{\text{tech}} &= \text{LSTM}_{2\text{-layer, }h{=}128}
+    (\hat{\mathbf{x}}_{\text{tech}})
+    \in \mathbb{R}^{B \times T \times 128} \\
+  \mathbf{A}_{\text{tech}} &= \text{MultiHeadAttn}_{4\text{ heads}}
+    (\mathbf{H}_{\text{tech}})
+    \in \mathbb{R}^{B \times T \times 128} \\
+  \mathbf{z}_{\text{tech}} &= \mathbf{A}_{\text{tech}}[:, -1, :]
+    \in \mathbb{R}^{B \times 128}
+\end{align}
+
+A two-layer LSTM with hidden size 128 captures temporal dependencies in the
+technical indicators.  The 4-head self-attention mechanism applied to the LSTM
+outputs learns which timesteps within the 20-day lookback window are most
+informative for the prediction task.  The attended representation at the last
+timestep is extracted as the branch output.
+
+\subsubsection{Branch 2: Sentiment Branch (Lightweight GRU)}
+
+The sentiment branch processes the 2 RF-selected sentiment features:
+
+\begin{align}
+  \hat{\mathbf{x}}_{\text{sent}} &= \text{LayerNorm}(\mathbf{x}_{\text{sent}}) \\
+  \mathbf{H}_{\text{sent}},\; \mathbf{h}_{\text{sent}} &=
+    \text{GRU}_{1\text{-layer, }h{=}32}(\hat{\mathbf{x}}_{\text{sent}}) \\
+  \mathbf{z}_{\text{sent}} &= \mathbf{h}_{\text{sent}}[-1]
+    \in \mathbb{R}^{B \times 32}
+\end{align}
+
+Several deliberate design choices distinguish this branch:
+
+\begin{itemize}
+  \item \textbf{GRU instead of LSTM.}  A GRU (Gated Recurrent Unit) has
+        approximately $25\%$ fewer parameters than an LSTM of the same hidden
+        size because it lacks a separate cell state ($\mathbf{c}_t$).  With only
+        2 input features, an LSTM's additional capacity offers no benefit and
+        increases the risk of overfitting.
+
+  \item \textbf{Small hidden size ($h = 32$ vs.\ $h = 128$).}  The sentiment
+        branch is intentionally constrained to ${\sim}$3{,}000 parameters so
+        that it cannot dominate gradient updates.  Sentiment should act as a
+        \emph{learned modifier} of the technical signal, not an equal partner.
+
+  \item \textbf{No attention.}  The sentiment features (\texttt{sent\_surprise},
+        \texttt{sent\_ema\_20d}) are already derived summary statistics that
+        aggregate information over 20-day windows.  Adding attention on top of
+        these would introduce unnecessary complexity.
+
+  \item \textbf{Single layer.}  Deeper recurrence is unnecessary for 2-dimensional
+        input and would further increase overfitting risk.
+\end{itemize}
+
+\subsubsection{Fusion Layer}
+
+The outputs of both branches are concatenated and processed through a shared
+dense network:
+
+\begin{align}
+  \mathbf{z}_{\text{fused}} &= [\mathbf{z}_{\text{tech}} \;\|\;
+    \mathbf{z}_{\text{sent}}]
+    \in \mathbb{R}^{B \times 160} \\
+  \mathbf{f} &= \text{Dropout}_{0.3}\bigl(\text{ReLU}\bigl(
+    \mathbf{W}_{\text{fc}}\, \mathbf{z}_{\text{fused}} + \mathbf{b}_{\text{fc}}
+    \bigr)\bigr)
+    \in \mathbb{R}^{B \times 64}
+\end{align}
+
+The fusion layer learns to weight the relative importance of technical and
+sentiment representations adaptively.
+
+\subsubsection{Task-Specific Output Heads}
+
+\paragraph{Classification Head (HybridAttentionLSTM).}
+For the 3-class trend prediction task:
+
+\begin{equation}
+  \hat{\mathbf{y}} = \mathbf{W}_2\, \text{ReLU}(\mathbf{W}_1\, \mathbf{f} +
+    \mathbf{b}_1) + \mathbf{b}_2
+    \in \mathbb{R}^{B \times 3}
+    \label{eq:cls-head}
+\end{equation}
+
+with an intermediate projection $64 \to 32 \to 3$ and dropout of $0.15$ between
+layers.
+
+\paragraph{Regression Head (HybridRegressionLSTM).}
+For the vol-adjusted forward return prediction task:
+
+\begin{equation}
+  \hat{y} = \mathbf{w}^\top \text{ReLU}(\mathbf{W}_1\, \mathbf{f} +
+    \mathbf{b}_1) + b
+    \in \mathbb{R}^{B}
+    \label{eq:reg-head}
+\end{equation}
+
+with the same $64 \to 32 \to 1$ projection, producing a single scalar output.
+
+\subsubsection{Graceful Degradation}
+
+When the \texttt{--no-sentiment} flag is passed, the model is instantiated with
+$n_{\text{sent}} = 0$.  In this configuration, the sentiment branch is
+automatically disabled (via a \texttt{has\_sentiment\_branch} flag) and the
+fusion layer input size reduces from 160 to 128.  This enables controlled A/B
+experiments where the \emph{only} difference is the presence or absence of the
+sentiment branch.
+
+% ·····································
+\subsection{Weight Initialisation}
+\label{sec:weight-init}
+% ·····································
+
+Proper weight initialisation is critical for training stability in recurrent
+networks.  We apply different initialisation strategies to different parameter
+types, reflecting the distinct roles they play:
+
+\paragraph{Xavier Uniform Initialisation (Input-to-Hidden Weights).}
+All \texttt{weight\_ih} (input-to-hidden) parameters in both the LSTM and GRU
+layers are initialised using Xavier (Glorot) uniform
+initialisation~\cite{glorot2010understanding}:
+
+\begin{equation}
+  W_{ij} \sim \mathcal{U}\!\left(-\sqrt{\frac{6}{n_{\text{in}} + n_{\text{out}}}},\;
+  +\sqrt{\frac{6}{n_{\text{in}} + n_{\text{out}}}}\right)
+\end{equation}
+
+Xavier initialisation sets the variance of weights such that the variance of
+activations is preserved across layers during the forward pass.  This prevents
+the signal from either exploding or vanishing at initialisation, which is
+especially important for the first layer of a recurrent network where the input
+distribution is known to be standardised.
+
+\paragraph{Orthogonal Initialisation (Hidden-to-Hidden Weights).}
+All \texttt{weight\_hh} (hidden-to-hidden, recurrent) parameters are initialised
+as orthogonal matrices~\cite{saxe2014exact}:
+
+\begin{equation}
+  \mathbf{W}_{\text{hh}} = \mathbf{U}\mathbf{V}^\top, \quad
+  \text{where } \mathbf{U}\boldsymbol{\Sigma}\mathbf{V}^\top =
+  \text{SVD}(\mathbf{A}),\; A_{ij} \sim \mathcal{N}(0, 1)
+\end{equation}
+
+Orthogonal matrices have all singular values equal to 1, meaning that repeated
+matrix--vector multiplication (as occurs across time steps in an RNN)
+\emph{preserves the norm} of the hidden state vector.  This directly combats the
+vanishing/exploding gradient problem that plagues recurrent networks: without
+orthogonal initialisation, the spectral norm of $\mathbf{W}_{\text{hh}}$
+deviating from 1 causes exponential amplification or attenuation over the
+20-step lookback window.
+
+\paragraph{Zero-Initialised Biases.}
+All bias terms are initialised to zero.  Combined with the above weight
+initialisations, this ensures that at the start of training the gates in the
+LSTM (input, forget, output) and GRU (reset, update) are approximately
+balanced, avoiding pathological initial states where the forget gate is fully
+open or fully closed.
+
+\paragraph{Dense Layers.}
+All \texttt{nn.Linear} layers in the fusion network and output heads use Xavier
+uniform initialisation with zero biases, consistent with standard practice for
+feed-forward networks with ReLU activations.
+
+% ·····································
+\subsection{Loss Functions}
+\label{sec:loss-functions}
+% ·····································
+
+The choice of loss function was guided by the specific challenges of each task
+formulation.
+
+\paragraph{Classification: Cross-Entropy with Label Smoothing.}
+For the 3-class trend prediction task, we use \textbf{Cross-Entropy Loss} with
+a label smoothing factor of $\epsilon = 0.1$:
+
+\begin{equation}
+  \mathcal{L}_{\text{CE}} = -\sum_{c=1}^{3}
+    \tilde{y}_c \log \hat{y}_c, \qquad
+  \tilde{y}_c = (1 - \epsilon)\, y_c + \frac{\epsilon}{3}
+  \label{eq:ce-loss}
+\end{equation}
+
+Cross-Entropy is the standard loss for multi-class classification because it
+directly optimises the log-likelihood of the correct class.  We chose it over
+alternatives such as Focal Loss because our class distribution (down/neutral/up)
+is roughly balanced by design (the return thresholds $\pm 0.5\%$ are calibrated
+to produce near-equal class frequencies).
+
+Label smoothing is applied because financial trend labels are inherently noisy:
+a daily return of $+0.51\%$ (classified as ``up'') and $+0.49\%$ (classified as
+``neutral'') are essentially the same event.  By softening the target
+distribution, label smoothing discourages the model from becoming overconfident
+about these boundary cases and improves generalisation.
+
+\paragraph{Regression: Huber Loss.}
+For the vol-adjusted return prediction task, we use \textbf{Huber Loss} (also
+known as Smooth L1 Loss) with $\delta = 1.0$:
+
+\begin{equation}
+  \mathcal{L}_{\text{Huber}}(y, \hat{y}) =
+  \begin{cases}
+    \frac{1}{2}(y - \hat{y})^2 & \text{if } |y - \hat{y}| \leq \delta \\
+    \delta\, |y - \hat{y}| - \frac{1}{2}\delta^2 & \text{otherwise}
+  \end{cases}
+  \label{eq:huber-loss}
+\end{equation}
+
+We chose Huber Loss over standard Mean Squared Error (MSE) because financial
+returns are heavy-tailed: extreme returns (e.g.\ earnings surprises, flash
+crashes) produce large residuals that, under MSE, generate disproportionately
+large gradients.  Huber Loss transitions from quadratic (L2) behaviour near
+zero to linear (L1) behaviour for large residuals, effectively clipping the
+influence of outliers without discarding them entirely.  This yields more
+stable training dynamics compared to MSE, which we observed to produce
+oscillating loss curves in early experiments.
+
+We also explored \textbf{MSE Loss} and \textbf{Log-Cosh Loss} in earlier
+iterations.  MSE was abandoned due to sensitivity to outlier returns.
+Log-Cosh --- which is approximately $\frac{1}{2}x^2$ for small $x$ and
+$|x| - \log 2$ for large $x$ --- performed comparably to Huber but offered
+no clear advantage while being less interpretable.
+
+% --------------------------------------------------------------------------
+\section{Dynamic Model}
+\label{sec:dynamic-model}
+% --------------------------------------------------------------------------
+
+The dynamic model describes how the structural model is trained, evaluated,
+and evolved over time.
+
+% ·····································
+\subsection{Walk-Forward (Rolling-Origin) Validation}
+\label{sec:walk-forward}
+% ·····································
+
+Standard $k$-fold cross-validation is inappropriate for time-series data because
+it violates the temporal ordering of observations: a model trained on 2019 data
+and tested on 2017 data would exploit information from the future.  We therefore
+employ \textbf{walk-forward validation} with an \textbf{expanding window}
+protocol:
+
+\begin{enumerate}
+  \item The date range 2017-Q1 through 2019-Q4 is divided into 12 quarterly
+        folds.  The fold boundaries are:
+        $\{$2017-01, 2017-04, 2017-07, 2017-10, 2018-01, \ldots, 2019-10$\}$.
+
+  \item For fold $k$ with validation period $[t_k^{\text{start}},\,
+        t_k^{\text{end}})$:
+        \begin{itemize}
+          \item \textbf{Training set}: all data from 2012-01-01 up to
+                $t_k^{\text{start}}$ (expanding window).
+          \item \textbf{Validation set}: data from
+                $[t_k^{\text{start}},\, t_k^{\text{end}})$.
+        \end{itemize}
+
+  \item A \textbf{fresh model} is initialised and trained from scratch for each
+        fold.  There is no warm-starting or weight transfer between folds.  This
+        prevents information leakage from future folds and simulates the
+        realistic deployment scenario where a model is periodically retrained
+        from scratch.
+
+  \item Each fold's scaler is fitted exclusively on that fold's training data.
+\end{enumerate}
+
+\noindent
+After all 12 folds, the per-fold predictions are concatenated and evaluated as a
+single continuous prediction stream, yielding a final aggregate metric that
+represents realistic out-of-sample performance.
+
+\begin{figure}[htbp]
+\centering
+\begin{verbatim}
+Fold  Training Data (expanding)    Validation Quarter
+─── ─────────────────────────── ──────────────────────
+  1  2012-01 ──────────── 2017-01  [2017-Q1]
+  2  2012-01 ──────────── 2017-04  [2017-Q2]
+  3  2012-01 ──────────── 2017-07  [2017-Q3]
+  4  2012-01 ──────────── 2017-10  [2017-Q4]
+  5  2012-01 ──────────── 2018-01  [2018-Q1]
+  6  2012-01 ──────────── 2018-04  [2018-Q2]
+  7  2012-01 ──────────── 2018-07  [2018-Q3]
+  8  2012-01 ──────────── 2018-10  [2018-Q4]
+  9  2012-01 ──────────── 2019-01  [2019-Q1]
+ 10  2012-01 ──────────── 2019-04  [2019-Q2]
+ 11  2012-01 ──────────── 2019-07  [2019-Q3]
+ 12  2012-01 ──────────── 2019-10  [2019-Q4]
+\end{verbatim}
+\caption{Walk-forward validation schedule (12 quarterly folds).  Each fold's
+training window expands by one quarter while the validation quarter advances
+forward.}
+\label{fig:walk-forward}
+\end{figure}
+
+% ·····································
+\subsection{Sequence Construction}
+\label{sec:sequences}
+% ·····································
+
+From each stock's time series, fixed-length input sequences are constructed via a
+sliding window:
+
+\begin{equation}
+  \mathbf{X}_i = [\mathbf{x}_{i},\; \mathbf{x}_{i+1},\; \ldots,\;
+    \mathbf{x}_{i+L-1}] \in \mathbb{R}^{L \times d}, \qquad
+  y_i = \text{target}_{i+L}
+\end{equation}
+
+where $L = 20$ trading days (approximately one calendar month) is the lookback
+window and $d = 22$ is the feature dimensionality.  Sequences are assigned to
+the fold whose validation period contains the \emph{target date} $t_{i+L}$.
+The lookback window naturally extends before the fold boundary, ensuring that
+the model has sufficient context.
+
+Multi-stock data is pooled: sequences from all training-set tickers are
+concatenated into a single array, shuffled, and batched.  This cross-sectional
+pooling forces the model to learn \emph{universal} patterns rather than
+stock-specific idiosyncrasies.
+
+% ·····································
+\subsection{Training Protocol}
+\label{sec:training-protocol}
+% ·····································
+
+Each fold trains independently with the following configuration:
+
+\begin{table}[htbp]
+\centering
+\caption{Training hyperparameters.}
+\label{tab:training-config}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Parameter}           & \textbf{Value} \\
+\midrule
+Optimiser                    & AdamW ($\beta_1{=}0.9$, $\beta_2{=}0.999$) \\
+Learning rate                & $5 \times 10^{-4}$ \\
+Weight decay                 & $1 \times 10^{-4}$ \\
+Batch size                   & 1024 (daily), 512 (weekly) \\
+Max epochs                   & 100 \\
+Early stopping patience      & 15 epochs \\
+LR scheduler                 & ReduceLROnPlateau (factor 0.5, patience 5) \\
+Minimum LR                   & $1 \times 10^{-6}$ \\
+Gradient clipping             & Max norm 1.0 \\
+Mixed precision              & FP16 via \texttt{torch.amp.GradScaler} \\
+Dropout                      & 0.3 (recurrent), 0.15 (output heads) \\
+Label smoothing (cls.\ only) & 0.1 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Mixed-Precision Training.}
+All GPU-accelerated folds use \texttt{torch.amp.autocast} (FP16) with
+\texttt{GradScaler} to halve memory consumption and increase throughput.  The
+\texttt{GradScaler} dynamically scales the loss to prevent underflow in FP16
+gradients, and \texttt{unscale\_} is called before gradient clipping to ensure
+the clip threshold operates on the true gradient magnitudes.
+
+\paragraph{Early Stopping.}
+The validation loss is monitored after each epoch.  If it fails to improve for
+15 consecutive epochs, training is halted and the best model checkpoint (lowest
+validation loss) is restored.  This prevents overfitting on the training set
+while avoiding premature termination.
+
+\paragraph{Normalisation.}
+A \texttt{StandardScaler} (z-score normalisation) is fitted exclusively on each
+fold's training data and applied to both training and validation splits.  This
+ensures zero mean and unit variance for all features, which is critical for
+LSTM stability since the gates' sigmoid activations are sensitive to input
+scale.
+
+% ·····································
+\subsection{A/B Experiment Design}
+\label{sec:ab-design}
+% ·····································
+
+To isolate the marginal contribution of sentiment, every experiment is run in
+two configurations:
+
+\begin{enumerate}
+  \item \textbf{Sentiment ON}: the full 22-feature vector (20 technical + 2
+        sentiment) is used, and the dual-branch architecture processes them
+        through separate pathways.
+
+  \item \textbf{Sentiment OFF}: the same ticker universe, date range, and
+        hyperparameters are used, but the 2 sentiment features are zeroed out.
+        The model is instantiated with $n_{\text{sent}} = 0$, which disables the
+        sentiment branch entirely.
+\end{enumerate}
+
+\noindent
+By holding the ticker universe constant (even in the no-sentiment condition),
+we ensure that any performance difference is attributable solely to the
+sentiment signal, not to a different stock selection.
+
+Additionally, the monolithic architecture (AttentionLSTM with sentiment as
+regular features) is run as a third configuration to isolate the contribution of
+the architectural change (dual-branch) from the contribution of the data
+(sentiment features).
+
+
+% ============================================================================
+\chapter{Experimentation Environment and Experiment Design}
+\label{ch:experiments}
+% ============================================================================
+
+% ·····································
+\section{Hardware and Software Environment}
+\label{sec:hardware}
+% ·····································
+
+All experiments were executed on the following configuration:
+
+\begin{table}[htbp]
+\centering
+\caption{Hardware and software environment.}
+\label{tab:environment}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Component}  & \textbf{Specification} \\
+\midrule
+GPU                  & NVIDIA GeForce RTX 2060 (6\,GB VRAM) \\
+CPU                  & Intel / AMD (host) \\
+RAM                  & 16\,GB DDR4 \\
+OS                   & Windows \\
+Python               & 3.10+ \\
+PyTorch              & 2.x with CUDA \\
+Key Libraries        & \texttt{transformers} (FinBERT), \texttt{pandas\_ta},
+                       \texttt{scikit-learn}, \texttt{shap}, \texttt{scipy} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent
+The 6\,GB VRAM constraint directly informed several design decisions:
+FinBERT inference batch size was limited to 16, LSTM hidden sizes were kept at
+128 (rather than the 256--512 common in NLP), and mixed-precision training
+(FP16) was mandatory for the larger walk-forward experiments.
+
+% ·····································
+\section{Experiment Progression}
+\label{sec:experiment-progression}
+% ·····································
+
+The experimental campaign comprised six phases, each informed by the failures
+and insights of the preceding phase.  Table~\ref{tab:experiment-phases}
+summarises the progression.
+
+\begin{table}[htbp]
+\centering
+\caption{Six-phase experiment progression.}
+\label{tab:experiment-phases}
+\begin{tabular}{@{}clp{8cm}@{}}
+\toprule
+\textbf{Phase} & \textbf{Name} & \textbf{Description} \\
+\midrule
+1 & Single-Stock Baseline   & LSTM trained per-stock on OHLCV; established
+                                that per-stock models overfit badly. \\
+2 & Pooled Baseline (V7--V10) & Multi-stock pooled training with
+                                ComprehensiveIndicatorsV7; SHAP feature
+                                selection; achieved stable but modest
+                                baselines. \\
+3 & Sentiment Correlation   & Pearson correlation of FinBERT sentiment vs.\
+                                same-day and next-day returns; confirmed
+                                weak linear signal. \\
+4 & Monolithic Sentiment    & Sentiment features concatenated as additional
+                                LSTM inputs; walk-forward validation; no
+                                improvement over no-sentiment baseline. \\
+5 & Dual-Branch Hybrid      & Separate LSTM+Attention for technicals and GRU
+                                for sentiment; walk-forward validation;
+                                marginal improvements in some folds. \\
+6 & Architecture Comparison & Head-to-head A/B: monolithic vs.\ dual-branch
+                                vs.\ no-sentiment; established that
+                                architectural separation slightly outperforms
+                                monolithic but sentiment overall does not
+                                produce statistically significant
+                                improvement. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ·····································
+\section{Classification Experiment Design}
+\label{sec:cls-experiment}
+% ·····································
+
+\subsection{Task Definition}
+
+The classification task predicts a 3-class trend label for each stock on each
+trading day:
+
+\begin{equation}
+  y_t =
+  \begin{cases}
+    0 \;(\text{Down})    & \text{if } R_{t+1} < -0.5\% \\
+    1 \;(\text{Neutral}) & \text{if } -0.5\% \leq R_{t+1} \leq +0.5\% \\
+    2 \;(\text{Up})      & \text{if } R_{t+1} > +0.5\%
+  \end{cases}
+  \label{eq:trend-label}
+\end{equation}
+
+where $R_{t+1} = (P_{t+1} - P_t) / P_t$ is the next-day simple return.
+
+\subsection{Metrics}
+
+\begin{itemize}
+  \item \textbf{Accuracy}: fraction of correctly classified samples.
+  \item \textbf{Macro F1-Score}: unweighted mean of per-class F1 scores,
+        ensuring that minority classes receive equal importance.
+  \item \textbf{Per-class Precision and Recall}: to diagnose whether the model
+        is biased toward the neutral class (a common failure mode).
+  \item \textbf{Cohen's Kappa}: agreement beyond chance, since a naive
+        always-neutral classifier would achieve ${\sim}33\%$ accuracy.
+\end{itemize}
+
+\subsection{Sentiment Features (Classification)}
+
+The two features selected by RF permutation importance for the classification
+task are:
+
+\begin{enumerate}
+  \item \texttt{sent\_surprise}: $\texttt{sent\_mean}_t - \text{MA}_{20}(\texttt{sent\_mean})$.
+        Measures deviation from the 20-day sentiment baseline.  Captures days
+        where sentiment is abnormally positive or negative relative to the
+        recent regime.
+
+  \item \texttt{sent\_ema\_20d}: $\text{EMA}_{20}(\texttt{sent\_mean})$.
+        Captures the long-horizon sentiment regime, smoothing out daily
+        fluctuations.
+\end{enumerate}
+
+% ·····································
+\section{Regression Experiment Design}
+\label{sec:reg-experiment}
+% ·····································
+
+\subsection{Task Definition}
+
+The regression task predicts the \textbf{volatility-adjusted forward return}:
+
+\begin{equation}
+  y_t = \frac{R_{t+1}}{\sigma_{t}^{(20)}}, \qquad
+  \sigma_{t}^{(20)} = \text{std}(R_{t-19}, \ldots, R_t)
+  \label{eq:vol-adj-return}
+\end{equation}
+
+where $\sigma_{t}^{(20)}$ is the trailing 20-day return volatility.  This
+normalisation makes the target comparable across stocks with different
+volatility profiles and across different market regimes.  The target is clipped
+to $[-10, +10]$ to prevent extreme outliers from destabilising training.
+
+\subsection{Metrics}
+
+\begin{itemize}
+  \item \textbf{Mean Squared Error (MSE)} and \textbf{Mean Absolute Error (MAE)}:
+        standard regression metrics.
+  \item \textbf{$R^2$ (coefficient of determination)}: fraction of variance
+        explained by the model.  $R^2 > 0$ indicates improvement over predicting
+        the mean.
+  \item \textbf{Information Coefficient (IC)}: Spearman rank correlation between
+        predicted and actual returns across all stocks at each time point.  A
+        positive IC indicates that the model's cross-sectional ranking of stocks
+        has predictive value, even if the point predictions are inaccurate.
+  \item \textbf{Directional Accuracy}: fraction of days where the model correctly
+        predicts the sign of the return.
+\end{itemize}
+
+\subsection{Sentiment Features (Regression)}
+
+The regression task uses a different pair of sentiment features, also selected
+by RF permutation importance but with $R^2$ scoring:
+
+\begin{enumerate}
+  \item \texttt{sent\_count\_log}: $\log(1 + \text{news count})$.  Captures
+        abnormal news activity, which often precedes large price moves
+        regardless of sentiment direction.
+
+  \item \texttt{sent\_strength}: $|\texttt{sent\_mean}| \times
+        \log(1 + \text{count})$.  An interaction term that combines sentiment
+        polarity magnitude with news volume, capturing the intuition that
+        a strongly negative day \emph{with many articles} is more informative
+        than a single negative headline.
+\end{enumerate}
+
+% ·····································
+\section{Controlled Comparison Design}
+\label{sec:controlled}
+% ·····································
+
+Each experiment configuration is run in a controlled factorial design:
+
+\begin{table}[htbp]
+\centering
+\caption{Factorial experiment design.  Each row represents a distinct
+experimental run, all using the same ticker universe, date range, and
+hyperparameters.}
+\label{tab:factorial}
+\begin{tabular}{@{}lllp{6cm}@{}}
+\toprule
+\textbf{Run} & \textbf{Architecture} & \textbf{Sentiment} & \textbf{Purpose} \\
+\midrule
+A & HybridAttentionLSTM  & ON  & Full proposed system \\
+B & HybridAttentionLSTM  & OFF & Isolates sentiment contribution \\
+C & AttentionLSTM (mono) & ON  & Isolates architectural contribution \\
+D & AttentionLSTM (mono) & OFF & Baseline (no sentiment, no hybrid) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent
+Comparing A vs.\ B reveals the \emph{marginal value of sentiment} given the
+hybrid architecture.  Comparing A vs.\ C reveals the \emph{marginal value of
+the hybrid architecture} given sentiment.  Comparing A vs.\ D reveals the
+\emph{combined effect} of both innovations.
+
+% ·····································
+\section{Auxiliary Analyses}
+\label{sec:auxiliary}
+% ·····································
+
+Beyond the main experiments, several auxiliary analyses were conducted to
+deepen understanding of the system:
+
+\paragraph{SHAP Importance Analysis.}
+SHAP values were computed for the technical feature selection model (XGBoost)
+to produce a ranked list of the most informative indicators.  The top 20
+features were retained; the remaining ${\sim}$80 were discarded.
+
+\paragraph{Sentiment Density Analysis.}
+A ticker-by-ticker density analysis computed the fraction of business days with
+at least one non-neutral headline.  This analysis produced the exclusion list
+of 90 noisy tickers and the density-based ranking used for ticker selection.
+
+\paragraph{Sentiment--Return Correlation Analysis.}
+As described in Section~\ref{sec:correlation-analysis}, Pearson correlations
+were computed between daily sentiment and both same-day and next-day returns
+for all tickers, with scatter-plot visualisations produced for each.
+
+\paragraph{Hyperparameter Sensitivity.}
+Learning rate, hidden size, dropout, and sequence length were varied in a grid
+search during the pooled baseline phase.  The final hyperparameters
+(Table~\ref{tab:training-config}) represent the configuration that achieved
+the lowest validation loss across the majority of folds.
+
+\paragraph{Model Size Ablation.}
+The sentiment branch hidden size was varied (16, 32, 64) to verify that the
+small branch (32) achieves the best trade-off between capacity and overfitting.
+
+
+% ============================================================================
+% Placeholder for bibliography entries referenced above
+% ============================================================================
+% \begin{thebibliography}{99}
+% \bibitem{fnspid2024} ...
+% \bibitem{finbert2019} ...
+% \bibitem{devlin2019bert} ...
+% \bibitem{glorot2010understanding} ...
+% \bibitem{saxe2014exact} ...
+% \bibitem{lundberg2017shap} ...
+% \end{thebibliography}
