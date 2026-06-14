@@ -23,7 +23,7 @@ def main():
 
     try:
         # Start FastAPI backend
-        print("🚀 Starting FastAPI backend on http://localhost:8000 ...")
+        print("[BACKEND] Starting FastAPI backend on http://localhost:8000 ...")
         backend_proc = subprocess.Popen(
             [sys.executable, "-m", "uvicorn", "dashboard.backend.main:app",
              "--reload", "--port", "8000", "--host", "0.0.0.0"],
@@ -33,7 +33,7 @@ def main():
         time.sleep(2)
 
         # Start Vite frontend
-        print("🎨 Starting Vite frontend on http://localhost:5173 ...")
+        print("[FRONTEND] Starting Vite frontend on http://localhost:5173 ...")
         frontend_proc = subprocess.Popen(
             ["npm", "run", "dev"],
             cwd=str(FRONTEND_DIR),
@@ -58,7 +58,7 @@ def main():
             time.sleep(1)
 
     except KeyboardInterrupt:
-        print("\n🛑 Shutting down...")
+        print("\n[SYSTEM] Shutting down...")
         for p in procs:
             try:
                 p.terminate()

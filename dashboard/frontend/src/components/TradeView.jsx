@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { fetchApi } from '../hooks/useApi';
-import { createChart, CandlestickSeries, HistogramSeries } from 'lightweight-charts';
+import { createChart, CandlestickSeries, HistogramSeries, createSeriesMarkers } from 'lightweight-charts';
 
 function TickerRankingList({ rankings, activeTicker, onSelect }) {
   if (!rankings || rankings.length === 0) {
@@ -143,7 +143,7 @@ function CandlestickPanel({ ticker, trades }) {
         .sort((a, b) => a.time.localeCompare(b.time));
 
       if (markers.length > 0) {
-        candleSeries.setMarkers(markers);
+        createSeriesMarkers(candleSeries, markers);
       }
     }
 

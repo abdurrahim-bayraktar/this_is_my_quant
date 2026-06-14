@@ -1,15 +1,15 @@
 export function formatPct(val, decimals = 2) {
   if (val == null || isNaN(val)) return '—';
-  return `${(val * 100).toFixed(decimals)}%`;
+  return `${(Number(val) * 100).toFixed(decimals)}%`;
 }
 
 export function formatNum(val, decimals = 4) {
-  if (val == null || isNaN(val)) return '—';
-  return val.toFixed(decimals);
+  if (val == null || isNaN(val) || val === '') return '—';
+  return Number(val).toFixed(decimals);
 }
 
 export function formatInt(val) {
-  if (val == null || isNaN(val)) return '—';
+  if (val == null || isNaN(val) || val === '') return '—';
   return Number(val).toLocaleString();
 }
 
