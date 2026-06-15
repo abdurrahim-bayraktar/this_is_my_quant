@@ -164,6 +164,7 @@ class DARNNBacktestRunner:
         backtest_start: str = None,
         backtest_end: str = None,
         top_n_test_stocks: int = None,
+        use_train_stocks: bool = False,
     ):
         self.report_dir = Path(report_dir)
         with open(self.report_dir / "config.json", "r") as f:
@@ -225,7 +226,11 @@ class DARNNBacktestRunner:
         if self.use_sentiment:
             self.sentiment_data = load_sentiment_data()
 
-        if self.top_n_test_stocks is not None:
+        if use_train_stocks and self.train_stocks:
+            # Evaluate on the training stock universe (for comparison with rule-based baselines)
+            self.test_stocks = list(self.train_stocks)  # copy to avoid mutation
+            logger.info(f"Using train_stocks_list as evaluation universe: {len(self.test_stocks)} stocks")
+        elif self.top_n_test_stocks is not None:
             # Override test stocks with top N from the density-ranked universe
             all_tickers_in_universe = list(set(self.train_stocks + original_test_stocks))
             self.test_stocks = all_tickers_in_universe[:self.top_n_test_stocks]
@@ -788,6 +793,9 @@ if __name__ == "__main__":
                         help="Backtest end date (default: from walk-forward config)")
     parser.add_argument("--top-n-test-stocks", type=int, default=None,
                         help="Override test set with top N stocks from the training universe")
+    parser.add_argument("--use-train-stocks", action="store_true",
+                        help="Evaluate on train_stocks_list from config instead of test_stocks. "
+                             "Useful for comparing with rule-based baselines on the same universe.")
     args = parser.parse_args()
 
     runner = DARNNBacktestRunner(
@@ -795,5 +803,6 @@ if __name__ == "__main__":
         backtest_start=args.start,
         backtest_end=args.end,
         top_n_test_stocks=args.top_n_test_stocks,
+        use_train_stocks=args.use_train_stocks,
     )
     runner.run()

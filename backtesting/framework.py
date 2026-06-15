@@ -176,6 +176,40 @@ class Backtester:
                 if len(selected) > 0:
                     weights[selected] = 1.0 / len(selected)
 
+            # === KARASH RULE-BASED STRATEGIES (use 'Karash_Score' column) ===
+            # These strategies rank stocks by the composite Karash score (-100 to +100).
+
+            elif strategy_name == "Karash_Threshold_Long":
+                # Long any stock whose Karash score exceeds a threshold
+                threshold = kwargs.get('threshold', 50)
+                selected = day_data[day_data['Karash_Score'] > threshold]['Ticker']
+                if len(selected) > 0:
+                    weights[selected] = 1.0 / len(selected)
+
+            elif strategy_name == "Karash_Long_Top_Pct":
+                # Long the top X% of stocks by Karash score
+                pct = kwargs.get('long_pct', 0.20)
+                n = max(1, int(len(day_data) * pct))
+                top = day_data.nlargest(n, 'Karash_Score')['Ticker']
+                if not top.empty:
+                    weights[top] = 1.0 / len(top)
+
+            elif strategy_name == "Karash_Long_Short":
+                # Long top X%, short bottom X% — market neutral
+                long_pct = kwargs.get('long_pct', 0.20)
+                short_pct = kwargs.get('short_pct', 0.20)
+                n_long = max(1, int(len(day_data) * long_pct))
+                n_short = max(1, int(len(day_data) * short_pct))
+                top = day_data.nlargest(n_long, 'Karash_Score')['Ticker']
+                bottom = day_data.nsmallest(n_short, 'Karash_Score')['Ticker']
+                # Remove any overlap
+                overlap = set(top).intersection(set(bottom))
+                top = top[~top.isin(overlap)]
+                bottom = bottom[~bottom.isin(overlap)]
+                if len(top) > 0 and len(bottom) > 0:
+                    weights[top] = 0.5 / len(top)
+                    weights[bottom] = -0.5 / len(bottom)
+
             else:
                 raise ValueError(f"Unknown strategy: {strategy_name}")
                 
