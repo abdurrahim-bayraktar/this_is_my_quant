@@ -59,8 +59,14 @@ EXCLUDED_FEATURES = [
 ]
 
 SENTIMENT_FEATURES = [
+    "sent_mean",
+    "sent_std",
     "sent_count_log",
+    "sent_momentum_3d",
+    "sent_ema_5d",
+    "sent_surprise",
     "sent_strength",
+    "sent_ema_20d",
 ]
 
 EXCLUDE_TICKERS = {
@@ -183,8 +189,8 @@ class DARNNBacktestRunner:
         # --- Sentiment ---
         self.use_sentiment = self.config.get("use_sentiment", False)
         sentiment_features_cfg = self.config.get("sentiment_features", [])
-        # If sentiment is enabled but no features listed, use defaults
-        if self.use_sentiment and not sentiment_features_cfg:
+        # If no features listed, use defaults to match the trainer behavior
+        if not sentiment_features_cfg:
             self.sentiment_feature_names = SENTIMENT_FEATURES
         else:
             self.sentiment_feature_names = sentiment_features_cfg

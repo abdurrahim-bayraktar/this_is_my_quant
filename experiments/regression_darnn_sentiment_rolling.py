@@ -91,8 +91,7 @@ EXCLUDED_FEATURES = [
     'dpo',
 ]
 
-# RF permutation importance selected these 2 from 8 candidates (see
-# experiments/sentiment_feature_selection.py for full ranking).
+# Full list of 8 sentiment feature candidates
 SENTIMENT_FEATURES = [
     "sent_mean",           # Daily avg sentiment (positive − negative)
     "sent_std",            # Intraday sentiment dispersion

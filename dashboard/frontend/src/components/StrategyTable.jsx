@@ -22,8 +22,8 @@ export default function StrategyTable({ strategies, name }) {
   const format = (val, fmt) => {
     if (val == null) return '—';
     if (fmt === 'pct') return formatPct(val);
-    if (fmt === 'num2') return val.toFixed(2);
-    if (fmt === 'num1') return val.toFixed(1);
+    if (fmt === 'num2') return formatNum(val, 2);
+    if (fmt === 'num1') return formatNum(val, 1);
     return String(val);
   };
 

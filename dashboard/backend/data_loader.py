@@ -188,15 +188,21 @@ def scan_reports(reports_dir: Path = None) -> List[Dict[str, Any]]:
 
         summary_path = entry / "summary.csv"
         config_path = entry / "config.json"
+        has_summary = summary_path.exists()
+        has_config = config_path.exists()
+        has_backtest = (entry / "backtest_results.csv").exists()
 
-        if not summary_path.exists():
+        if not has_summary and not has_config and not has_backtest:
             continue
 
-        summary = _parse_csv_row(summary_path)
-        if not summary:
-            continue
+        summary = _parse_csv_row(summary_path) if has_summary else {}
+        if summary is None:
+            summary = {}
 
-        config = _parse_config(config_path) if config_path.exists() else {}
+        config = _parse_config(config_path) if has_config else {}
+        if config is None:
+            config = {}
+            
         task_type = _detect_task_type(summary)
         headline_name, headline_value = _get_headline_metric(summary, task_type)
 
@@ -239,11 +245,16 @@ def get_experiment_detail(name: str, reports_dir: Path = None) -> Optional[Dict[
     if not exp_dir.exists():
         return None
 
-    summary = _parse_csv_row(exp_dir / "summary.csv")
-    if not summary:
-        return None
+    summary = _parse_csv_row(exp_dir / "summary.csv") if (exp_dir / "summary.csv").exists() else {}
+    if summary is None:
+        summary = {}
 
-    config = _parse_config(exp_dir / "config.json") or {}
+    config = _parse_config(exp_dir / "config.json") if (exp_dir / "config.json").exists() else {}
+    if config is None:
+        config = {}
+
+    if not summary and not config and not (exp_dir / "backtest_results.csv").exists():
+        return None
 
     result = {
         "name": name,
