@@ -74,10 +74,12 @@ class ComprehensiveIndicatorsV7:
         def safe_compute(name, func):
             try:
                 result = func()
+                if result is None:
+                    return pd.Series(np.nan, index=df.index)
                 return result
             except Exception as e:
                 logger.debug(f"Failed to compute {name}: {e}")
-                return None
+                return pd.Series(np.nan, index=df.index)
         
         # ===== MOVING AVERAGES =====
         df['sma_5'] = safe_compute('sma_5', lambda: self.ta.sma(df['Close'], length=5))

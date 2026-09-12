@@ -702,6 +702,7 @@ class DARNNSentimentRollingExperiment:
         self.decoder_hidden = config.get("decoder_hidden", 64)
 
         self.excluded_features = config.get("excluded_features", EXCLUDED_FEATURES)
+        self.single_fold = config.get("single_fold", False)
 
         # Output directory
         exp_name = config.get("experiment_name", "wf_darnn_sentiment")
@@ -1172,6 +1173,10 @@ class DARNNSentimentRollingExperiment:
         """Execute the walk-forward DA-RNN + sentiment regression experiment pipeline."""
         folds = self._generate_walk_forward_folds()
 
+        if self.single_fold:
+            folds = folds[-1:]
+            logger.info("Single fold mode enabled: training only the most recent fold.")
+
         logger.info("=" * 80)
         logger.info("WALK-FORWARD DA-RNN + SENTIMENT REGRESSION EXPERIMENT")
         logger.info("=" * 80)
@@ -1565,6 +1570,7 @@ def main():
     parser.add_argument("--encoder-hidden", type=int, default=64, help="Encoder LSTM hidden size")
     parser.add_argument("--decoder-hidden", type=int, default=64, help="Decoder LSTM hidden size")
     parser.add_argument("--no-sentiment", action="store_true", help="Disable sentiment features (baseline)")
+    parser.add_argument("--single-fold", action="store_true", help="Limit to a single fold (most recent) for production training")
     parser.add_argument("--max-tickers", type=int, default=DEFAULT_MAX_TICKERS,
                         help=f"Max tickers by density rank (default: {DEFAULT_MAX_TICKERS})")
     parser.add_argument("--no-cache", action="store_true")
@@ -1596,6 +1602,7 @@ def main():
         "encoder_hidden": args.encoder_hidden,
         "decoder_hidden": args.decoder_hidden,
         "use_sentiment": not args.no_sentiment,
+        "single_fold": args.single_fold,
         "max_tickers": args.max_tickers,
         "start_date": args.start_date,
         "end_date": args.end_date,

@@ -21,6 +21,8 @@ from pathlib import Path
 import json
 import logging
 import argparse
+import shutil
+from datetime import datetime
 import numpy as np
 import pandas as pd
 import torch
@@ -55,6 +57,7 @@ class KarashBacktestRunner:
         backtest_end: str = "2024-12-31",
         data_start: str = "2014-01-01",
         output_dir: str = None,
+        tickers: list = None,
     ):
         self.backtest_start = pd.Timestamp(backtest_start)
         self.backtest_end = pd.Timestamp(backtest_end)
@@ -70,24 +73,38 @@ class KarashBacktestRunner:
             )
 
         # Determine stock universe
-        self.test_stocks = self._resolve_stock_universe(report_dir, top_n_stocks)
+        self.test_stocks = self._resolve_stock_universe(report_dir, top_n_stocks, tickers)
 
         # Output directory
         if output_dir:
             self.output_dir = Path(output_dir)
         elif report_dir:
-            self.output_dir = Path(report_dir) / "karash_eval"
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            self.output_dir = Path(report_dir).parent / f"bt_karash_{Path(report_dir).name}_{timestamp}"
         else:
-            self.output_dir = Path("reports") / "karash_standalone"
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            self.output_dir = Path("reports") / f"karash_standalone_{timestamp}"
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    def _resolve_stock_universe(self, report_dir: str, top_n_stocks: int) -> list:
+        # Copy report metadata (summary.csv, config.json) but NOT model weights
+        if report_dir:
+            for fname in ["summary.csv", "config.json"]:
+                src = Path(report_dir) / fname
+                if src.exists():
+                    shutil.copy2(src, self.output_dir / fname)
+
+    def _resolve_stock_universe(self, report_dir: str, top_n_stocks: int, tickers: list = None) -> list:
         """
         Resolve the stock universe in priority order:
-        1. If --report-dir given, use train_stocks_list from its config.json
-        2. If --top-n-stocks given, take that many from EXTENDED_TICKERS
-        3. Otherwise, use full EXTENDED_TICKERS
+        1. If --tickers given, use that exact list
+        2. If --report-dir given, use train_stocks_list from its config.json
+        3. If --top-n-stocks given, take that many from EXTENDED_TICKERS
+        4. Otherwise, use full EXTENDED_TICKERS
         """
+        if tickers:
+            logger.info(f"Using custom ticker list: {tickers}")
+            return tickers
+
         if report_dir:
             config_path = Path(report_dir) / "config.json"
             if config_path.exists():
@@ -391,7 +408,13 @@ if __name__ == "__main__":
         "--output-dir", type=str, default=None,
         help="Output directory for results (default: auto-generated)"
     )
+    parser.add_argument(
+        "--tickers", type=str, default=None,
+        help="Comma-separated list of tickers to backtest on (e.g. AAPL,MSFT,GOOG)"
+    )
     args = parser.parse_args()
+
+    custom_tickers = [t.strip().upper() for t in args.tickers.split(",")] if args.tickers else None
 
     runner = KarashBacktestRunner(
         report_dir=args.report_dir,
@@ -399,5 +422,6 @@ if __name__ == "__main__":
         backtest_start=args.start,
         backtest_end=args.end,
         output_dir=args.output_dir,
+        tickers=custom_tickers,
     )
     runner.run()

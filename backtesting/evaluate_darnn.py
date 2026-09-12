@@ -25,6 +25,8 @@ import json
 import logging
 import argparse
 import gc
+import shutil
+from datetime import datetime
 import numpy as np
 import pandas as pd
 import torch
@@ -171,6 +173,7 @@ class DARNNBacktestRunner:
         backtest_end: str = None,
         top_n_test_stocks: int = None,
         use_train_stocks: bool = False,
+        tickers: list = None,
     ):
         self.report_dir = Path(report_dir)
         with open(self.report_dir / "config.json", "r") as f:
@@ -236,6 +239,9 @@ class DARNNBacktestRunner:
             # Evaluate on the training stock universe (for comparison with rule-based baselines)
             self.test_stocks = list(self.train_stocks)  # copy to avoid mutation
             logger.info(f"Using train_stocks_list as evaluation universe: {len(self.test_stocks)} stocks")
+        elif tickers:
+            self.test_stocks = tickers
+            logger.info(f"Using custom ticker list: {tickers}")
         elif self.top_n_test_stocks is not None:
             # Override test stocks with top N from the density-ranked universe
             all_tickers_in_universe = list(set(self.train_stocks + original_test_stocks))
@@ -251,6 +257,25 @@ class DARNNBacktestRunner:
         self.target_scaler = StandardScaler()
         self.model = None
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # Create backtest output directory (copy report metadata, not model)
+        self.output_dir = self._create_output_dir()
+
+    def _create_output_dir(self) -> Path:
+        """Create a backtest output directory by copying summary + config from the report."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_name = f"bt_{self.report_dir.name}_{timestamp}"
+        output_dir = self.report_dir.parent / output_name
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Copy report metadata (summary.csv, config.json) but NOT model weights
+        for fname in ["summary.csv", "config.json"]:
+            src = self.report_dir / fname
+            if src.exists():
+                shutil.copy2(src, output_dir / fname)
+
+        logger.info(f"Backtest output directory: {output_dir}")
+        return output_dir
 
     # ------------------------------------------------------------------
     # Sentiment merge (same logic as experiment)
@@ -527,14 +552,18 @@ class DARNNBacktestRunner:
                 except (KeyError, IndexError):
                     raw_ret = 0.0
 
-                if np.isnan(raw_ret):
+                if raw_ret is None or (isinstance(raw_ret, float) and np.isnan(raw_ret)):
                     raw_ret = 0.0
+
+                pred_val = float(predictions_original[j])
+                if np.isnan(pred_val):
+                    pred_val = 0.0
 
                 test_records.append({
                     'Date': date,
                     'Ticker': ticker,
-                    'Pred_Return': predictions_original[j],
-                    'Return_Next': raw_ret,
+                    'Pred_Return': pred_val,
+                    'Return_Next': float(raw_ret),
                     'Actual_Vol_Adj': y_test[j],  # unscaled vol-adj target
                 })
 
@@ -675,7 +704,7 @@ class DARNNBacktestRunner:
             logger.info(f"Cumulative Spread:       {cum_spread:.2%}")
             logger.info(f"Evaluated on {len(ic_df)} dates")
 
-            ic_csv = self.report_dir / "cross_sectional_ic.csv"
+            ic_csv = self.output_dir / "cross_sectional_ic.csv"
             ic_df.to_csv(ic_csv)
             logger.info(f"Saved IC time series to: {ic_csv}")
         else:
@@ -708,7 +737,7 @@ class DARNNBacktestRunner:
         baseline_df['Prob_Up'] = 0.33
 
         # Ensure plots directory exists
-        plots_dir = self.report_dir / "plots"
+        plots_dir = self.output_dir / "plots"
         plots_dir.mkdir(exist_ok=True)
 
         from src.evaluation.plots import plot_portfolio_composition, plot_trade_activity
@@ -736,14 +765,14 @@ class DARNNBacktestRunner:
                 results.append(metrics)
 
                 if not holdings_df.empty:
-                    out_holdings = self.report_dir / f"{safe_label}_holdings.csv"
+                    out_holdings = self.output_dir / f"{safe_label}_holdings.csv"
                     holdings_df.to_csv(out_holdings, index=False)
                     plot_portfolio_composition(
                         holdings_df, label, plots_dir / f"{safe_label}_composition.png"
                     )
 
                 if not trades_df.empty:
-                    out_trades = self.report_dir / f"{safe_label}_trades.csv"
+                    out_trades = self.output_dir / f"{safe_label}_trades.csv"
                     trades_df.to_csv(out_trades, index=False)
                     plot_trade_activity(
                         trades_df, label, plots_dir / f"{safe_label}_activity.png"
@@ -763,7 +792,7 @@ class DARNNBacktestRunner:
             logger.info("=" * 80)
             print(results_df.to_string(index=False))
 
-            out_csv = self.report_dir / "backtest_results.csv"
+            out_csv = self.output_dir / "backtest_results.csv"
             results_df.to_csv(out_csv, index=False)
             logger.info(f"\nSaved backtest results to: {out_csv}")
 
@@ -772,6 +801,7 @@ class DARNNBacktestRunner:
         logger.info("SUMMARY")
         logger.info("=" * 60)
         logger.info(f"Report dir: {self.report_dir}")
+        logger.info(f"Output dir: {self.output_dir}")
         logger.info(f"Model: DARNN (sentiment={'ON' if self.use_sentiment else 'OFF'})")
         if not ic_df.empty:
             logger.info(f"Cross-Sectional IC: {mean_ic:.4f} (IR={ic_ir:.4f}, Hit={hit_rate:.2%})")
@@ -802,7 +832,11 @@ if __name__ == "__main__":
     parser.add_argument("--use-train-stocks", action="store_true",
                         help="Evaluate on train_stocks_list from config instead of test_stocks. "
                              "Useful for comparing with rule-based baselines on the same universe.")
+    parser.add_argument("--tickers", type=str, default=None,
+                        help="Comma-separated list of tickers to backtest on (e.g. AAPL,MSFT,GOOG)")
     args = parser.parse_args()
+
+    custom_tickers = [t.strip().upper() for t in args.tickers.split(",")] if args.tickers else None
 
     runner = DARNNBacktestRunner(
         args.report_dir,
@@ -810,5 +844,6 @@ if __name__ == "__main__":
         backtest_end=args.end,
         top_n_test_stocks=args.top_n_test_stocks,
         use_train_stocks=args.use_train_stocks,
+        tickers=custom_tickers,
     )
     runner.run()

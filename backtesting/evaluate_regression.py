@@ -16,6 +16,8 @@ from pathlib import Path
 import json
 import logging
 import argparse
+import shutil
+from datetime import datetime
 import numpy as np
 import pandas as pd
 import torch
@@ -114,7 +116,7 @@ class RegressionBacktestRunner:
     backtesting strategies + cross-sectional IC analysis.
     """
 
-    def __init__(self, report_dir: str, backtest_start: str = None, backtest_end: str = "2024-12-31", top_n_test_stocks: int = None):
+    def __init__(self, report_dir: str, backtest_start: str = None, backtest_end: str = "2024-12-31", top_n_test_stocks: int = None, tickers: list = None):
         self.report_dir = Path(report_dir)
         with open(self.report_dir / "config.json", "r") as f:
             self.config = json.load(f)
@@ -131,7 +133,10 @@ class RegressionBacktestRunner:
             self.train_stocks = [t for t in all_train if t not in original_test_stocks]
             
             # Now set the actual test_stocks for evaluation
-            if self.top_n_test_stocks is not None:
+            if tickers:
+                self.test_stocks = tickers
+                logger.info(f"Using custom ticker list: {tickers}")
+            elif self.top_n_test_stocks is not None:
                 self.test_stocks = EXTENDED_TICKERS[:self.top_n_test_stocks]
                 logger.info(f"Overriding test_stocks with top {self.top_n_test_stocks} from ranked_tickers.py")
             else:
@@ -140,7 +145,10 @@ class RegressionBacktestRunner:
             logger.warning("Could not import EXTENDED_TICKERS, using test_stocks from config only.")
             if self.top_n_test_stocks is not None:
                 logger.warning("Cannot use --top-n-test-stocks without ranked_tickers.py")
-            self.test_stocks = original_test_stocks
+            if tickers:
+                self.test_stocks = tickers
+            else:
+                self.test_stocks = original_test_stocks
             self.train_stocks = []
 
         self.frequency = self.config.get("frequency", "daily")
@@ -164,6 +172,25 @@ class RegressionBacktestRunner:
         self.scaler = StandardScaler()
         self.model = None
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # Create backtest output directory (copy report metadata, not model)
+        self.output_dir = self._create_output_dir()
+
+    def _create_output_dir(self) -> Path:
+        """Create a backtest output directory by copying summary + config from the report."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_name = f"bt_{self.report_dir.name}_{timestamp}"
+        output_dir = self.report_dir.parent / output_name
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Copy report metadata (summary.csv, config.json) but NOT model weights
+        for fname in ["summary.csv", "config.json"]:
+            src = self.report_dir / fname
+            if src.exists():
+                shutil.copy2(src, output_dir / fname)
+
+        logger.info(f"Backtest output directory: {output_dir}")
+        return output_dir
 
     # ------------------------------------------------------------------
     # Data loading & feature extraction
@@ -438,7 +465,7 @@ class RegressionBacktestRunner:
             logger.info(f"Evaluated on {len(ic_df)} dates")
 
             # Save IC time series
-            ic_csv = self.report_dir / "cross_sectional_ic.csv"
+            ic_csv = self.output_dir / "cross_sectional_ic.csv"
             ic_df.to_csv(ic_csv)
             logger.info(f"Saved IC time series to: {ic_csv}")
         else:
@@ -472,7 +499,7 @@ class RegressionBacktestRunner:
         baseline_df = preds_df.copy()
         baseline_df['Prob_Up'] = 0.33
         # Ensure plots directory exists
-        plots_dir = self.report_dir / "plots"
+        plots_dir = self.output_dir / "plots"
         plots_dir.mkdir(exist_ok=True)
         
         # Import plotting functions inline to avoid circular imports if any
@@ -502,14 +529,14 @@ class RegressionBacktestRunner:
                 
                 # Save holding and trade logs
                 if not holdings_df.empty:
-                    out_holdings = self.report_dir / f"{safe_label}_holdings.csv"
+                    out_holdings = self.output_dir / f"{safe_label}_holdings.csv"
                     holdings_df.to_csv(out_holdings, index=False)
                     
                     # Generate plot
                     plot_portfolio_composition(holdings_df, label, plots_dir / f"{safe_label}_composition.png")
                     
                 if not trades_df.empty:
-                    out_trades = self.report_dir / f"{safe_label}_trades.csv"
+                    out_trades = self.output_dir / f"{safe_label}_trades.csv"
                     trades_df.to_csv(out_trades, index=False)
                     
                     # Generate plot
@@ -529,7 +556,7 @@ class RegressionBacktestRunner:
             logger.info("=" * 80)
             print(results_df.to_string(index=False))
 
-            out_csv = self.report_dir / "backtest_results.csv"
+            out_csv = self.output_dir / "backtest_results.csv"
             results_df.to_csv(out_csv, index=False)
             logger.info(f"\nSaved backtest results to: {out_csv}")
 
@@ -566,12 +593,17 @@ if __name__ == "__main__":
                         help="Backtest end date")
     parser.add_argument("--top-n-test-stocks", type=int, default=None,
                         help="Override test set with top N stocks from ranked_tickers.py")
+    parser.add_argument("--tickers", type=str, default=None,
+                        help="Comma-separated list of tickers to backtest on (e.g. AAPL,MSFT,GOOG)")
     args = parser.parse_args()
+
+    custom_tickers = [t.strip().upper() for t in args.tickers.split(",")] if args.tickers else None
 
     runner = RegressionBacktestRunner(
         args.report_dir,
         backtest_start=args.start,
         backtest_end=args.end,
         top_n_test_stocks=args.top_n_test_stocks,
+        tickers=custom_tickers,
     )
     runner.run()
