@@ -434,6 +434,7 @@ class RegressionBacktestRunner:
 
         # 4. Generate predictions
         preds_df = self.prepare_test_predictions(stock_data, n_features)
+        preds_df.to_csv(self.output_dir / "predictions.csv", index=False)
         logger.info(f"Generated {len(preds_df):,} predictions across {preds_df['Ticker'].nunique()} stocks")
 
         n_dates = preds_df['Date'].nunique()
@@ -548,7 +549,11 @@ class RegressionBacktestRunner:
         # 7. Output
         if results:
             results_df = pd.DataFrame(results)
-            cols = ['Strategy'] + [c for c in results_df.columns if c != 'Strategy']
+            
+            results_df.insert(1, 'Start Date', self.backtest_start.strftime('%Y-%m-%d'))
+            results_df.insert(2, 'End Date', self.backtest_end.strftime('%Y-%m-%d'))
+            
+            cols = ['Strategy', 'Start Date', 'End Date'] + [c for c in results_df.columns if c not in ['Strategy', 'Start Date', 'End Date']]
             results_df = results_df[cols]
 
             logger.info("\n" + "=" * 80)

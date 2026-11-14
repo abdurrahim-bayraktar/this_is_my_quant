@@ -1,0 +1,82 @@
+{
+  "experiment_name": "darnn_class_2012-22_1000",
+  "frequency": "daily",
+  "test_stocks": [
+    "MSFT",
+    "AAPL",
+    "JPM",
+    "JNJ",
+    "XOM",
+    "WMT",
+    "DIS",
+    "BA",
+    "KO",
+    "NVDA",
+    "SPY",
+    "SPX"
+  ],
+  "epochs": 100,
+  "dropout": 0.2,
+  "learning_rate": 0.0005,
+  "patience": 15,
+  "label_smoothing": 0.1,
+  "encoder_hidden": 64,
+  "decoder_hidden": 64,
+  "start_date": "2012-01-01",
+  "end_date": "2021-12-31",
+  "wf_val_start": "2022-01-01",
+  "wf_val_end": "2024-12-31",
+  "wf_step": "QS",
+  "train_stock_count": 996,
+  "n_folds": 12,
+  "folds": [
+    {
+      "fold_start": "2022-01-01",
+      "fold_end": "2022-04-01"
+    },
+    {
+      "fold_start": "2022-04-01",
+      "fold_end": "2022-07-01"
+    },
+    {
+      "fold_start": "2022-07-01",
+      "fold_end": "2022-10-01"
+    },
+    {
+      "fold_start": "2022-10-01",
+      "fold_end": "2023-01-01"
+    },
+    {
+      "fold_start": "2023-01-01",
+      "fold_end": "2023-04-01"
+    },
+    {
+      "fold_start": "2023-04-01",
+      "fold_end": "2023-07-01"
+    },
+    {
+      "fold_start": "2023-07-01",
+      "fold_end": "2023-10-01"
+    },
+    {
+      "fold_start": "2023-10-01",
+      "fold_end": "2024-01-01"
+    },
+    {
+      "fold_start": "2024-01-01",
+      "fold_end": "2024-04-01"
+    },
+    {
+      "fold_start": "2024-04-01",
+      "fold_end": "2024-07-01"
+    },
+    {
+      "fold_start": "2024-07-01",
+      "fold_end": "2024-10-01"
+    },
+    {
+      "fold_start": "2024-10-01",
+      "fold_end": "2022-01-01"
+    }
+  ]
+}

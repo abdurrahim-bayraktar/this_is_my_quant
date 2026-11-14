@@ -346,7 +346,11 @@ class KarashBacktestRunner:
         # 5. Output results
         if results:
             results_df = pd.DataFrame(results)
-            cols = ['Strategy'] + [c for c in results_df.columns if c != 'Strategy']
+            
+            results_df.insert(1, 'Start Date', self.backtest_start.strftime('%Y-%m-%d'))
+            results_df.insert(2, 'End Date', self.backtest_end.strftime('%Y-%m-%d'))
+            
+            cols = ['Strategy', 'Start Date', 'End Date'] + [c for c in results_df.columns if c not in ['Strategy', 'Start Date', 'End Date']]
             results_df = results_df[cols]
 
             logger.info("\n" + "=" * 80)

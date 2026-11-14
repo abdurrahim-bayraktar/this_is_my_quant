@@ -1,0 +1,73 @@
+{
+  "experiment_name": "wf_classification_darnn",
+  "frequency": "daily",
+  "train_stocks": [
+    "BKNG",
+    "MELI",
+    "FCNCA",
+    "KLAC",
+    "ASML"
+  ],
+  "test_stocks": [
+    "MSFT",
+    "AAPL",
+    "JPM",
+    "JNJ",
+    "XOM",
+    "WMT",
+    "DIS",
+    "BA",
+    "KO",
+    "NVDA",
+    "SPY",
+    "SPX"
+  ],
+  "epochs": 2,
+  "dropout": 0.2,
+  "learning_rate": 0.0005,
+  "patience": 15,
+  "label_smoothing": 0.1,
+  "encoder_hidden": 64,
+  "decoder_hidden": 64,
+  "start_date": "2014-01-01",
+  "end_date": "2024-12-31",
+  "wf_val_start": "2023-01-01",
+  "wf_val_end": "2024-12-31",
+  "wf_step": "QS",
+  "train_stock_count": 5,
+  "n_folds": 8,
+  "folds": [
+    {
+      "fold_start": "2023-01-01",
+      "fold_end": "2023-04-01"
+    },
+    {
+      "fold_start": "2023-04-01",
+      "fold_end": "2023-07-01"
+    },
+    {
+      "fold_start": "2023-07-01",
+      "fold_end": "2023-10-01"
+    },
+    {
+      "fold_start": "2023-10-01",
+      "fold_end": "2024-01-01"
+    },
+    {
+      "fold_start": "2024-01-01",
+      "fold_end": "2024-04-01"
+    },
+    {
+      "fold_start": "2024-04-01",
+      "fold_end": "2024-07-01"
+    },
+    {
+      "fold_start": "2024-07-01",
+      "fold_end": "2024-10-01"
+    },
+    {
+      "fold_start": "2024-10-01",
+      "fold_end": "2025-01-01"
+    }
+  ]
+}

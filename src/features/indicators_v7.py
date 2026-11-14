@@ -271,6 +271,7 @@ class ComprehensiveIndicatorsV7:
     
     def _compute_domain_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """Add domain knowledge binary/categorical features."""
+        df = df.copy()
         
         # Moving Average Crossovers
         if 'sma_50' in df.columns and 'sma_200' in df.columns:
