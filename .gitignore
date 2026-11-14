@@ -23,7 +23,7 @@ ENV/
 # Project specific
 # Data
 /data/
-/reports/
+*.png
 
 # Logs
 /logs/
@@ -31,7 +31,7 @@ ENV/
 
 # Trained models and checkpoints
 /models/
-
+*.pt
 # Experiments artifacts (if any are saved directly here not in logs/models)
 # But keep the scripts
 # /experiments/ 

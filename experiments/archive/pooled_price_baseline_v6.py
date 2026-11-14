@@ -266,7 +266,7 @@ class PooledExperimentV6:
         return stock_data
     
     def prepare_stock_data(self, df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray, List[str]]:
-        df = self.indicator_computer.compute_all(df)
+        df = self.indicator_computer.compute_all(df, exclude=['ichimoku_ICS_26'])
         feature_cols = self.indicator_computer.get_indicator_columns(df)
         
         df['return_next'] = df['Close'].pct_change().shift(-1)

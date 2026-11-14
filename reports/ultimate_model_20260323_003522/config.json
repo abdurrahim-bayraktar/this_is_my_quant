@@ -1,0 +1,23 @@
+{
+  "experiment_name": "ultimate_model",
+  "model_type": "simple",
+  "frequency": "daily",
+  "test_stocks": [
+    "MSFT",
+    "AAPL",
+    "JPM",
+    "JNJ",
+    "XOM",
+    "WMT",
+    "DIS",
+    "BA",
+    "KO",
+    "NVDA"
+  ],
+  "epochs": 100,
+  "dropout": 0.2,
+  "label_smoothing": 0.1,
+  "learning_rate": 0.0005,
+  "patience": 15,
+  "train_stock_count": 396
+}

@@ -1,0 +1,2 @@
+fold,train_end,val_end,test_end,train_time,n_params,pooled_accuracy,pooled_zero_rule,pooled_lift,pooled_mcc,pooled_f1_macro,pooled_n_samples,per_stock_avg_accuracy,per_stock_avg_lift,per_stock_avg_mcc,per_stock_count
+6,2020-01-01,2021-01-01,2022-01-01,125.40861392021179,8107,0.4104048884864033,0.379880416058415,0.03052447242798828,0.10746751669536267,0.34971335245690965,350047,0.40049850448654034,-0.007676969092721836,0.0321744590736278,10

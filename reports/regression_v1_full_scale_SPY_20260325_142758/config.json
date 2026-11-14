@@ -1,0 +1,26 @@
+{
+  "experiment_name": "regression_v1_full_scale_SPY",
+  "frequency": "daily",
+  "test_stocks": [
+    "MSFT",
+    "AAPL",
+    "JPM",
+    "JNJ",
+    "XOM",
+    "WMT",
+    "DIS",
+    "BA",
+    "KO",
+    "NVDA",
+    "SPY",
+    "SPX"
+  ],
+  "epochs": 100,
+  "dropout": 0.2,
+  "learning_rate": 0.0005,
+  "patience": 15,
+  "huber_delta": 1.0,
+  "vol_lookback": 20,
+  "target_clip": 10.0,
+  "train_stock_count": 896
+}

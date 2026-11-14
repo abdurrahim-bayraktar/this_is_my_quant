@@ -1,0 +1,48 @@
+{
+  "experiment_name": "smoke_nosent",
+  "model_type": "hybrid",
+  "frequency": "daily",
+  "test_stocks": [
+    "A",
+    "BAX",
+    "BBT"
+  ],
+  "epochs": 2,
+  "dropout": 0.2,
+  "label_smoothing": 0.1,
+  "learning_rate": 0.0005,
+  "patience": 15,
+  "use_sentiment": false,
+  "max_tickers": 10,
+  "start_date": "2012-01-01",
+  "end_date": "2019-12-31",
+  "wf_val_start": "2019-01-01",
+  "wf_val_end": "2019-06-30",
+  "wf_step": "QS",
+  "stocks": 400,
+  "train_stock_count": 7,
+  "feature_count": 20,
+  "n_technical_features": 20,
+  "n_sentiment_features": 0,
+  "sentiment_features": [],
+  "train_stocks_list": [
+    "AA",
+    "AGN",
+    "AKS",
+    "ALK",
+    "AMTD",
+    "ANF",
+    "APC"
+  ],
+  "n_folds": 2,
+  "folds": [
+    {
+      "fold_start": "2019-01-01",
+      "fold_end": "2019-04-01"
+    },
+    {
+      "fold_start": "2019-04-01",
+      "fold_end": "2020-01-01"
+    }
+  ]
+}

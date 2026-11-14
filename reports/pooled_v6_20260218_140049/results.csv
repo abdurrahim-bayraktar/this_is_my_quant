@@ -1,0 +1,2 @@
+model,n_features,n_params,n_stocks,total_samples,train_samples,samples_per_param,test_accuracy,class_0_acc,class_1_acc,class_2_acc,confusion_matrix,best_val_loss,epochs_trained,dropout,learning_rate,patience
+attention_lstm,72,314372,632,1462240,1169792,3.721043858867838,0.48440748440748443,0.4490105297660507,0.45528022232515053,0.5394615526461368,"[[21918, 13116, 13780], [9713, 19659, 13808], [10192, 14783, 29255]]",0.9937572135668586,100,0.4,0.0005,15

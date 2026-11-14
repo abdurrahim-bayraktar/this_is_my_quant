@@ -1,0 +1,4 @@
+method_1,method_2,jaccard_similarity,overlap_count,overlap_features
+mi_top30,shap_top30,0.25,12,"['atr_pct', 'cci', 'roc_10', 'roc_20', 'return_5d', 'log_return', 'return_1d', 'mstd_20', 'high_low_pct', 'intraday_range']"
+mi_top30,rfe_top30,0.2765957446808511,13,"['coppock', 'atr_pct', 'cci', 'roc_10', 'bop', 'return_5d', 'true_range', 'return_1d', 'mstd_20', 'high_low_pct']"
+shap_top30,rfe_top30,0.6216216216216216,23,"['volume_ratio', 'rsi_14', 'intraday_range', 'ppo_PPOh_12_26_9', 'aroon_AROOND_14', 'roc_10', 'bb_BBP_5_2.0_2.0', 'return_5d', 'high_low_pct', 'obv']"

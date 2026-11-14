@@ -1,0 +1,91 @@
+{
+  "experiment": "sentiment_feature_selection",
+  "timestamp": "20260526_214838",
+  "n_samples": 305971,
+  "n_tickers": 203,
+  "sentiment_features": [
+    "sent_mean",
+    "sent_std",
+    "sent_count_log",
+    "sent_momentum_3d",
+    "sent_ema_5d",
+    "sent_surprise",
+    "sent_strength",
+    "sent_ema_20d"
+  ],
+  "new_feature": "sent_ema_20d (20-day EMA of sent_mean)",
+  "top_k": 2,
+  "selected_features": [
+    "sent_count_log",
+    "sent_strength"
+  ],
+  "n_repeats": 20,
+  "n_estimators": 200,
+  "random_state": 42,
+  "rankings": [
+    {
+      "feature": "sent_count_log",
+      "importance_mean": 0.006139524861333817,
+      "importance_std": 8.620786079419428e-05,
+      "rank": 1,
+      "selected": true,
+      "gini_importance": 0.12953418880915224
+    },
+    {
+      "feature": "sent_strength",
+      "importance_mean": 0.00559181901080707,
+      "importance_std": 0.0001170180350944102,
+      "rank": 2,
+      "selected": true,
+      "gini_importance": 0.14237495260962754
+    },
+    {
+      "feature": "sent_mean",
+      "importance_mean": 0.004983033197437236,
+      "importance_std": 0.00012676859088053155,
+      "rank": 3,
+      "selected": false,
+      "gini_importance": 0.13591611927138303
+    },
+    {
+      "feature": "sent_surprise",
+      "importance_mean": 0.004291314150753328,
+      "importance_std": 8.048350464847489e-05,
+      "rank": 4,
+      "selected": false,
+      "gini_importance": 0.13047189745269544
+    },
+    {
+      "feature": "sent_std",
+      "importance_mean": 0.0036163103627081306,
+      "importance_std": 3.829361401834054e-05,
+      "rank": 5,
+      "selected": false,
+      "gini_importance": 0.11024976402600592
+    },
+    {
+      "feature": "sent_ema_5d",
+      "importance_mean": 0.0029999991159182114,
+      "importance_std": 4.039035954099257e-05,
+      "rank": 6,
+      "selected": false,
+      "gini_importance": 0.11748092937846522
+    },
+    {
+      "feature": "sent_momentum_3d",
+      "importance_mean": 0.002869108863447034,
+      "importance_std": 4.55883245623053e-05,
+      "rank": 7,
+      "selected": false,
+      "gini_importance": 0.12095986853673767
+    },
+    {
+      "feature": "sent_ema_20d",
+      "importance_mean": 0.00238773976388153,
+      "importance_std": 3.576099932255925e-05,
+      "rank": 8,
+      "selected": false,
+      "gini_importance": 0.11301227991593298
+    }
+  ]
+}
